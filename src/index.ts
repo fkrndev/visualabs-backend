@@ -31,7 +31,7 @@ const publicCors = cors({
 
 // CORS untuk protected routes
 const protectedCors = cors({
-  origin: ["http://localhost:9999", "http://127.0.0.1:9999"], // Sesuaikan dengan domain yang diizinkan
+  origin: ["http://localhost:8888", "http://127.0.0.1:8888"], // Sesuaikan dengan domain yang diizinkan
   allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
   allowHeaders: ["Content-Type", "Authorization"],
   credentials: true,
@@ -107,7 +107,7 @@ app.onError((err, c) => {
   );
 });
 
-const port = parseInt(process.env.PORT || "3002", 10);
+const port = parseInt(process.env.PORT || "2024", 10);
 console.log("PORT:", port);
 console.log(`Server is running on http://localhost:${port}`);
 
