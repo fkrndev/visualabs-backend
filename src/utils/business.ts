@@ -11,8 +11,8 @@ export function getBusinessIdFromOrigin(origin: string | null): number {
 
   // Mapping domain ke businessId
   const domainMapping: Record<string, number> = {
-    'http://localhost:3005': 1,
-    'http://127.0.0.1:3005': 1,
+    'http://localhost:8888': 1,
+    'http://127.0.0.1:8888': 1,
     // Tambahkan mapping domain lain di sini
     // 'https://yourdomain.com': 2,
   };

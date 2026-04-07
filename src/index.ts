@@ -14,9 +14,6 @@ import authRoutes from "./routes/auth";
 import registrationRoutes from "./routes/registration";
 import customerAuthRoutes from "./routes/customerAuth";
 import settingsRoutes from "./routes/settings";
-import storeConfigRoutes from "./routes/storeConfigs";
-import storeConfigMultipleRoutes from "./routes/storeConfigMultiples";
-import storeConfigDefaultRoutes from "./routes/storeConfigDefaults";
 import openApiSpec from "./openapi/spec";
 import { fetchBusinessUserRolesByUserId, role } from "./utils/auth/role";
 // import { readFileSync } from "fs";
@@ -36,7 +33,7 @@ const publicCors = cors({
 
 // CORS untuk protected routes
 const protectedCors = cors({
-  origin: ["http://localhost:3003", "http://127.0.0.1:3003"], // Sesuaikan dengan domain yang diizinkan
+  origin: ["http://localhost:9999", "http://127.0.0.1:9999"], // Sesuaikan dengan domain yang diizinkan
   allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
   allowHeaders: ["Content-Type", "Authorization"],
   credentials: true,
@@ -78,9 +75,6 @@ app.route("/auth", authRoutes);
 app.route("/public/registration", registrationRoutes);
 app.route("/public", customerAuthRoutes);
 app.route("/settings", settingsRoutes);
-app.route("/store-configs", storeConfigRoutes);
-app.route("/store-config-multiples", storeConfigMultipleRoutes);
-app.route("/store-config-defaults", storeConfigDefaultRoutes);
 
 app.notFound((c) => {
   return c.json(
