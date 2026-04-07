@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
-import { eq, and, or } from "drizzle-orm";
+import { eq, or } from "drizzle-orm";
 import { sign, verify } from "hono/jwt";
 import { randomBytes } from "crypto";
 import { jwt } from "hono/jwt";
@@ -10,7 +10,6 @@ import { db } from "../db/client";
 import { customers, customerProfiles, customerRefreshTokens } from "../db/schema";
 import { cleanEmail, cleanPhone } from "../utils/normalizers";
 import { verifyPassword } from "../utils/security";
-import { getBusinessIdFromOrigin } from "../utils/business";
 import { TYPE_CUSTOMER } from "../constants/auth";
 import { createCustomerSession } from "../utils/auth/customerAuth";
 
@@ -53,7 +52,7 @@ const parseExpiry = (value: string | undefined): number => {
   return amount * (unitMap[unit] ?? 3600);
 };
 
-const resolveIdentifierWhere = (identifier: string, businessId: number) => {
+const resolveIdentifierWhere = (identifier: string) => {
   // Cek apakah identifier adalah email
   if (identifier.includes("@")) {
     return {
@@ -90,21 +89,16 @@ const addSeconds = (date: Date, seconds: number) => {
  */
 router.post("/login", zValidator("json", loginSchema), async (c) => {
   const { identifier, password } = c.req.valid("json");
-  const origin = c.req.header("origin") || c.req.header("referer") || null;
+  const { column, value } = resolveIdentifierWhere(identifier);
 
-  // Dapatkan businessId berdasarkan origin
-  const businessId = getBusinessIdFromOrigin(origin);
+  console.log("Customer login attempt:", { identifier });
 
-  const { column, value } = resolveIdentifierWhere(identifier, businessId);
-
-  console.log("Customer login attempt:", { identifier, businessId });
-
-  // Cari customer berdasarkan identifier dan businessId
+  // Cari customer berdasarkan identifier
   const rows = await db
     .select({ customer: customers, profile: customerProfiles })
     .from(customers)
     .leftJoin(customerProfiles, eq(customerProfiles.customerId, customers.id))
-    .where(and(eq(column, value), eq(customers.businessId, businessId)))
+    .where(eq(column, value))
     .limit(1);
 
   const row = rows[0];
@@ -248,22 +242,15 @@ router.get("/auth/google/callback", async (c) => {
     const googleUser = await userInfoResponse.json();
     const { id: googleId, email, name, picture } = googleUser;
 
-    // Dapatkan businessId dari origin atau default
-    const origin = c.req.header("origin") || c.req.header("referer") || null;
-    const businessId = getBusinessIdFromOrigin(origin);
-
     // Cek apakah customer sudah ada berdasarkan googleId atau email
     const existingRows = await db
       .select({ customer: customers, profile: customerProfiles })
       .from(customers)
       .leftJoin(customerProfiles, eq(customerProfiles.customerId, customers.id))
       .where(
-        and(
-          eq(customers.businessId, businessId),
-          or(
-            eq(customers.googleId, googleId),
-            eq(customers.email, cleanEmail(email)),
-          ),
+        or(
+          eq(customers.googleId, googleId),
+          eq(customers.email, cleanEmail(email)),
         ),
       )
       .limit(1);
@@ -290,7 +277,6 @@ router.get("/auth/google/callback", async (c) => {
     } else {
       // Buat customer baru
       const [insertResult] = await db.insert(customers).values({
-        businessId,
         email: cleanEmail(email),
         googleId,
         username: null,
@@ -304,7 +290,6 @@ router.get("/auth/google/callback", async (c) => {
 
       // Buat profile
       await db.insert(customerProfiles).values({
-        businessId,
         customerId,
         name,
         email,
@@ -354,14 +339,13 @@ router.get("/auth/google/callback", async (c) => {
 router.get("/profile", requireCustomerAuth, async (c) => {
   const payload = c.get("jwtPayload");
   const customerId = Number(payload.sub);
-  const businessId = Number(payload.bid);
 
   try {
     const rows = await db
       .select({ customer: customers, profile: customerProfiles })
       .from(customers)
       .leftJoin(customerProfiles, eq(customerProfiles.customerId, customers.id))
-      .where(and(eq(customers.id, customerId), eq(customers.businessId, businessId)))
+      .where(eq(customers.id, customerId))
       .limit(1);
 
     const row = rows[0];
@@ -378,7 +362,6 @@ router.get("/profile", requireCustomerAuth, async (c) => {
       success: true,
       data: {
         id: customer.id,
-        businessId: customer.businessId,
         email: customer.email,
         username: customer.username,
         phone: customer.phone,
@@ -444,7 +427,6 @@ router.post("/refresh", async (c) => {
       {
         sub: customer.id.toString(),
         typ: TYPE_CUSTOMER,
-        bid: customer.businessId,
         exp,
         iat: now,
       },

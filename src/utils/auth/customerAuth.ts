@@ -55,7 +55,6 @@ export async function createCustomerSession(customer: any): Promise<CustomerLogi
     {
       sub: String(customer.id),
       typ: TYPE_CUSTOMER,
-      bid: customer.businessId,
       iat: now,
       exp,
     },
@@ -78,7 +77,6 @@ export async function createCustomerSession(customer: any): Promise<CustomerLogi
   
   console.log("[Customer Auth] Session created for customer:", {
     customerId: customer.id,
-    businessId: customer.businessId,
   });
   
   return {
@@ -91,7 +89,6 @@ export async function createCustomerSession(customer: any): Promise<CustomerLogi
     refreshExpiresAt: refreshExpAt.toISOString(),
     customer: {
       id: customer.id,
-      businessId: customer.businessId,
       email: customer.email,
       phone: customer.phone,
       username: customer.username,

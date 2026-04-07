@@ -48,26 +48,6 @@ export const openApiSpec = {
           updatedAt: { type: 'string', format: 'date-time' },
         },
       },
-      Business: {
-        type: 'object',
-        properties: {
-          id: { type: 'integer' },
-          name: { type: 'string' },
-          dataJson: { type: ['object', 'null'] },
-        },
-      },
-      BusinessUser: {
-        type: 'object',
-        properties: {
-          id: { type: 'integer' },
-          businessId: { type: 'integer' },
-          userId: { type: 'integer' },
-          role: { type: 'integer' },
-          dataJson: { type: ['object', 'null'] },
-          createdAt: { type: 'string', format: 'date-time' },
-          updatedAt: { type: 'string', format: 'date-time' },
-        },
-      },
       AuthLogin: {
         type: 'object',
         required: ['identifier', 'password'],
@@ -214,49 +194,6 @@ export const openApiSpec = {
       },
       delete: {
         summary: 'Hapus profile',
-        responses: { 200: { description: 'Deleted' } },
-      },
-    },
-    '/businesses': {
-      get: { summary: 'List bisnis', responses: { 200: { description: 'OK' } } },
-      post: {
-        summary: 'Buat bisnis',
-        requestBody: { required: true, content: { 'application/json': { schema: { $ref: '#/components/schemas/Business' } } } },
-        responses: { 201: { description: 'Created' } },
-      },
-    },
-    '/businesses/{id}': {
-      get: { summary: 'Detail bisnis', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer' } }], responses: { 200: { description: 'OK' } } },
-      put: {
-        summary: 'Update bisnis',
-        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer' } }],
-        requestBody: { required: true, content: { 'application/json': { schema: { $ref: '#/components/schemas/Business' } } } },
-        responses: { 200: { description: 'Updated' } },
-      },
-      delete: { summary: 'Hapus bisnis', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer' } }], responses: { 200: { description: 'Deleted' } } },
-    },
-    '/business-users': {
-      get: { summary: 'List anggota bisnis', responses: { 200: { description: 'OK' } } },
-      post: {
-        summary: 'Hubungkan user ke bisnis',
-        requestBody: {
-          required: true,
-          content: { 'application/json': { schema: { $ref: '#/components/schemas/BusinessUser' } } },
-        },
-        responses: { 201: { description: 'Created' } },
-      },
-    },
-    '/business-users/{id}': {
-      get: { summary: 'Detail relasi bisnis', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer' } }], responses: { 200: { description: 'OK' } } },
-      put: {
-        summary: 'Update relasi bisnis',
-        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer' } }],
-        requestBody: { required: true, content: { 'application/json': { schema: { $ref: '#/components/schemas/BusinessUser' } } } },
-        responses: { 200: { description: 'Updated' } },
-      },
-      delete: {
-        summary: 'Hapus relasi',
-        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer' } }],
         responses: { 200: { description: 'Deleted' } },
       },
     },

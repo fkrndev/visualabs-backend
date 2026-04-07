@@ -8,11 +8,7 @@ import { storeConfigMultiples } from "../db/schema";
 
 const router = new Hono();
 
-const businessQuery = z.object({
-  businessId: z.coerce.number().int().min(1),
-});
-
-const paginationQuery = businessQuery.extend({
+const paginationQuery = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(20),
   q: z.string().trim().optional(),
@@ -22,18 +18,14 @@ const paginationQuery = businessQuery.extend({
 });
 
 const payloadSchema = z.object({
-  businessId: z.number().int().min(1),
   key: z.string().trim().min(1).max(191),
   value: z.string().optional(),
 });
 
-const updatePayloadSchema = payloadSchema.partial().extend({
-  businessId: z.number().int().min(1),
-});
+const updatePayloadSchema = payloadSchema.partial();
 
 router.get("/", zValidator("query", paginationQuery), async (c) => {
   const {
-    businessId,
     page,
     limit,
     q,
@@ -44,7 +36,7 @@ router.get("/", zValidator("query", paginationQuery), async (c) => {
 
   const offset = (page - 1) * limit;
 
-  const filters = [eq(storeConfigMultiples.businessId, businessId)];
+  const filters = [] as any[];
   if (q) {
     const value = `%${q}%`;
     filters.push(like(storeConfigMultiples.key, value));
@@ -106,8 +98,7 @@ router.get("/", zValidator("query", paginationQuery), async (c) => {
   });
 });
 
-router.get("/:id", zValidator("query", businessQuery), async (c) => {
-  const { businessId } = c.req.valid("query");
+router.get("/:id", async (c) => {
   const id = parseInt(c.req.param("id"));
 
   if (isNaN(id) || id <= 0) {
@@ -115,10 +106,7 @@ router.get("/:id", zValidator("query", businessQuery), async (c) => {
   }
 
   const data = await db.query.storeConfigMultiples.findFirst({
-    where: and(
-      eq(storeConfigMultiples.id, id),
-      eq(storeConfigMultiples.businessId, businessId),
-    ),
+    where: eq(storeConfigMultiples.id, id),
   });
 
   if (!data) {
@@ -144,10 +132,8 @@ router.post("/", zValidator("json", payloadSchema), async (c) => {
 
 router.put(
   "/:id",
-  zValidator("query", businessQuery),
   zValidator("json", updatePayloadSchema),
   async (c) => {
-    const { businessId } = c.req.valid("query");
     const id = parseInt(c.req.param("id"));
     const payload = c.req.valid("json");
 
@@ -156,10 +142,7 @@ router.put(
     }
 
     const existingRecord = await db.query.storeConfigMultiples.findFirst({
-      where: and(
-        eq(storeConfigMultiples.id, id),
-        eq(storeConfigMultiples.businessId, businessId),
-      ),
+      where: eq(storeConfigMultiples.id, id),
     });
 
     if (!existingRecord) {
@@ -179,12 +162,7 @@ router.put(
     await db
       .update(storeConfigMultiples)
       .set(sets)
-      .where(
-        and(
-          eq(storeConfigMultiples.id, id),
-          eq(storeConfigMultiples.businessId, businessId),
-        ),
-      );
+      .where(eq(storeConfigMultiples.id, id));
 
     const updatedRecord = await db.query.storeConfigMultiples.findFirst({
       where: eq(storeConfigMultiples.id, id),
@@ -194,8 +172,7 @@ router.put(
   },
 );
 
-router.delete("/:id", zValidator("query", businessQuery), async (c) => {
-  const { businessId } = c.req.valid("query");
+router.delete("/:id", async (c) => {
   const id = parseInt(c.req.param("id"));
 
   if (isNaN(id) || id <= 0) {
@@ -203,10 +180,7 @@ router.delete("/:id", zValidator("query", businessQuery), async (c) => {
   }
 
   const existingRecord = await db.query.storeConfigMultiples.findFirst({
-    where: and(
-      eq(storeConfigMultiples.id, id),
-      eq(storeConfigMultiples.businessId, businessId),
-    ),
+    where: eq(storeConfigMultiples.id, id),
   });
 
   if (!existingRecord) {
@@ -215,12 +189,7 @@ router.delete("/:id", zValidator("query", businessQuery), async (c) => {
 
   await db
     .delete(storeConfigMultiples)
-    .where(
-      and(
-        eq(storeConfigMultiples.id, id),
-        eq(storeConfigMultiples.businessId, businessId),
-      ),
-    );
+    .where(eq(storeConfigMultiples.id, id));
 
   return c.json({ data: existingRecord });
 });

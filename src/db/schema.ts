@@ -57,9 +57,6 @@ export const customers = mysqlTable(
   "customers",
   {
     id: int("id").autoincrement().primaryKey(),
-    businessId: int("business_id")
-      .notNull()
-      .references(() => businesses.id, { onDelete: "cascade" }),
     email: varchar("email", { length: 191 }),
     username: varchar("username", { length: 100 }),
     phone: varchar("phone", { length: 32 }),
@@ -71,27 +68,11 @@ export const customers = mysqlTable(
     updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
   },
   (table) => [
-    uniqueIndex("customers_business_email_unique").on(
-      table.businessId,
-      table.email,
-    ),
-    uniqueIndex("customers_business_username_unique").on(
-      table.businessId,
-      table.username,
-    ),
-    uniqueIndex("customers_business_phone_unique").on(
-      table.businessId,
-      table.phone,
-    ),
-    uniqueIndex("customers_business_fbid_unique").on(
-      table.businessId,
-      table.fbid,
-    ),
-    uniqueIndex("customers_business_googleid_unique").on(
-      table.businessId,
-      table.googleId,
-    ),
-    index("customers_business_idx").on(table.businessId),
+    uniqueIndex("customers_email_unique").on(table.email),
+    uniqueIndex("customers_username_unique").on(table.username),
+    uniqueIndex("customers_phone_unique").on(table.phone),
+    uniqueIndex("customers_fbid_unique").on(table.fbid),
+    uniqueIndex("customers_googleid_unique").on(table.googleId),
   ],
 );
 
@@ -99,9 +80,6 @@ export const customerProfiles = mysqlTable(
   "customer_profiles",
   {
     id: int("id").autoincrement().primaryKey(),
-    businessId: int("business_id")
-      .notNull()
-      .references(() => businesses.id, { onDelete: "cascade" }),
     customerId: int("customer_id")
       .notNull()
       .references(() => customers.id, { onDelete: "cascade" }),
@@ -113,7 +91,6 @@ export const customerProfiles = mysqlTable(
     updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
   },
   (table) => [
-    index("customer_profiles_business_idx").on(table.businessId),
     index("customer_profiles_customer_idx").on(table.customerId),
     uniqueIndex("customer_profiles_customer_unique").on(table.customerId),
   ],
@@ -123,9 +100,6 @@ export const storeCategoryProducts = mysqlTable(
   "store_category_products",
   {
     id: int("id").autoincrement().primaryKey(),
-    businessId: int("business_id")
-      .notNull()
-      .references(() => businesses.id, { onDelete: "cascade" }),
     name: varchar("name", { length: 191 }).notNull(),
     key: varchar("key", { length: 191 }).notNull(),
     dataJson: json("data_json").$type<JsonRecord>(),
@@ -135,20 +109,12 @@ export const storeCategoryProducts = mysqlTable(
     updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
   },
   (table) => [
-    index("store_category_products_business_idx").on(table.businessId),
     index("store_category_products_visible_idx").on(
-      table.businessId,
       table.isShow,
       table.position,
     ),
-    uniqueIndex("store_category_products_business_name_unique").on(
-      table.businessId,
-      table.name,
-    ),
-    uniqueIndex("store_category_products_business_key_unique").on(
-      table.businessId,
-      table.key,
-    ),
+    uniqueIndex("store_category_products_name_unique").on(table.name),
+    uniqueIndex("store_category_products_key_unique").on(table.key),
   ],
 );
 
@@ -195,53 +161,17 @@ export const profiles = mysqlTable(
   ],
 );
 
-export const businesses = mysqlTable(
-  "businesses",
-  {
-    id: int("id").autoincrement().primaryKey(),
-    name: varchar("name", { length: 191 }).notNull(),
-    dataJson: json("data_json").$type<JsonRecord>(),
-  },
-  (table) => [index("businesses_name_idx").on(table.name)],
-);
-
 export const settings = mysqlTable(
   "settings",
   {
     id: int("id").autoincrement().primaryKey(),
-    businessId: int("business_id")
-      .notNull()
-      .references(() => businesses.id, { onDelete: "cascade" }),
     key: varchar("key", { length: 191 }).notNull(),
     dataJson: json("data_json").$type<JsonRecord>(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
   },
   (table) => [
-    index("settings_business_idx").on(table.businessId),
-    uniqueIndex("settings_business_key_unique").on(table.businessId, table.key),
-  ],
-);
-
-export const businessUsers = mysqlTable(
-  "business_users",
-  {
-    id: int("id").autoincrement().primaryKey(),
-    businessId: int("business_id")
-      .notNull()
-      .references(() => businesses.id, { onDelete: "cascade" }),
-    userId: int("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
-    role: int("role").notNull(),
-    dataJson: json("data_json").$type<JsonRecord>(),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
-  },
-  (table) => [
-    index("business_users_business_idx").on(table.businessId),
-    index("business_users_user_idx").on(table.userId),
-    uniqueIndex("business_user_unique").on(table.businessId, table.userId),
+    uniqueIndex("settings_key_unique").on(table.key),
   ],
 );
 
@@ -249,9 +179,6 @@ export const settingMultiples = mysqlTable(
   "setting_multiple",
   {
     id: int("id").autoincrement().primaryKey(),
-    businessId: int("business_id")
-      .notNull()
-      .references(() => businesses.id, { onDelete: "cascade" }),
     name: varchar("name", { length: 191 }).notNull(),
     key: varchar("key", { length: 191 }).notNull(),
     dataJson: json("data_json").$type<JsonRecord>(),
@@ -259,9 +186,7 @@ export const settingMultiples = mysqlTable(
     updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
   },
   (table) => [
-    index("setting_multiple_business_idx").on(table.businessId),
-    uniqueIndex("setting_multiple_business_name_key_unique").on(
-      table.businessId,
+    uniqueIndex("setting_multiple_name_key_unique").on(
       table.name,
       table.key,
     ),
@@ -273,7 +198,6 @@ export const userRelations = relations(users, ({ one, many }) => ({
     fields: [users.id],
     references: [profiles.userId],
   }),
-  businessUsers: many(businessUsers),
   refreshTokens: many(refreshTokens),
 }));
 
@@ -284,39 +208,13 @@ export const profileRelations = relations(profiles, ({ one }) => ({
   }),
 }));
 
-export const businessRelations = relations(businesses, ({ many }) => ({
-  businessUsers: many(businessUsers),
-  customers: many(customers),
-  customerProfiles: many(customerProfiles),
-  settings: many(settings),
-}));
-
-export const businessUserRelations = relations(businessUsers, ({ one }) => ({
-  business: one(businesses, {
-    fields: [businessUsers.businessId],
-    references: [businesses.id],
-  }),
-  user: one(users, {
-    fields: [businessUsers.userId],
-    references: [users.id],
-  }),
-}));
-
-export const customerRelations = relations(customers, ({ one, many }) => ({
-  business: one(businesses, {
-    fields: [customers.businessId],
-    references: [businesses.id],
-  }),
+export const customerRelations = relations(customers, ({ many }) => ({
   profiles: many(customerProfiles),
 }));
 
 export const customerProfileRelations = relations(
   customerProfiles,
   ({ one }) => ({
-    business: one(businesses, {
-      fields: [customerProfiles.businessId],
-      references: [businesses.id],
-    }),
     customer: one(customers, {
       fields: [customerProfiles.customerId],
       references: [customers.id],
@@ -343,9 +241,6 @@ export const quarterlyRocks = mysqlTable(
   "quarterly_rocks",
   {
     id: int("id").autoincrement().primaryKey(),
-    businessId: int("business_id")
-      .notNull()
-      .references(() => businesses.id, { onDelete: "cascade" }),
     ownerId: int("owner_id").notNull().default(0),
     year: int("year").notNull(),
     name: varchar("name", { length: 191 }).notNull(),
@@ -358,7 +253,6 @@ export const quarterlyRocks = mysqlTable(
     updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
   },
   (table) => [
-    index("quarterly_rocks_business_idx").on(table.businessId),
     index("quarterly_rocks_owner_idx").on(table.ownerId),
     index("quarterly_rocks_year_idx").on(table.year),
     index("quarterly_rocks_status_idx").on(table.status),
@@ -370,18 +264,14 @@ export const annualGoals = mysqlTable(
   "annual_goals",
   {
     id: int("id").autoincrement().primaryKey(),
-    businessId: int("business_id")
-      .notNull()
-      .references(() => businesses.id, { onDelete: "cascade" }),
     goal: varchar("goal", { length: 255 }).notNull(),
     year: int("year").notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
   },
   (table) => [
-    index("annual_goals_business_idx").on(table.businessId),
     index("annual_goals_year_idx").on(table.year),
-    uniqueIndex("annual_goals_business_year_unique").on(table.businessId, table.year),
+    uniqueIndex("annual_goals_year_unique").on(table.year),
   ],
 );
 
@@ -390,9 +280,6 @@ export const threeYearPicture = mysqlTable(
   "three_year_picture",
   {
     id: int("id").autoincrement().primaryKey(),
-    businessId: int("business_id")
-      .notNull()
-      .references(() => businesses.id, { onDelete: "cascade" }),
     futureDate: timestamp("future_date").notNull(),
     revenueTarget: decimal("revenue_target", { precision: 15, scale: 2 }),
     profitTarget: decimal("profit_target", { precision: 15, scale: 2 }),
@@ -401,9 +288,6 @@ export const threeYearPicture = mysqlTable(
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
   },
-  (table) => [
-    index("three_year_picture_business_idx").on(table.businessId),
-  ],
 );
 
 // KPI Categories
@@ -411,17 +295,13 @@ export const kpiCategories = mysqlTable(
   "kpi_categories",
   {
     id: int("id").autoincrement().primaryKey(),
-    businessId: int("business_id")
-      .notNull()
-      .references(() => businesses.id, { onDelete: "cascade" }),
     name: varchar("name", { length: 191 }).notNull(),
     order: int("order").notNull().default(0),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
   },
   (table) => [
-    index("kpi_categories_business_idx").on(table.businessId),
-    uniqueIndex("kpi_categories_business_name_unique").on(table.businessId, table.name),
+    uniqueIndex("kpi_categories_name_unique").on(table.name),
   ],
 );
 
@@ -430,9 +310,6 @@ export const kpis = mysqlTable(
   "kpis",
   {
     id: int("id").autoincrement().primaryKey(),
-    businessId: int("business_id")
-      .notNull()
-      .references(() => businesses.id, { onDelete: "cascade" }),
     categoryId: int("category_id")
       .notNull()
       .references(() => kpiCategories.id, { onDelete: "cascade" }),
@@ -448,7 +325,6 @@ export const kpis = mysqlTable(
     updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
   },
   (table) => [
-    index("kpis_business_idx").on(table.businessId),
     index("kpis_category_idx").on(table.categoryId),
     index("kpis_owner_idx").on(table.ownerId),
     index("kpis_active_idx").on(table.isActive),
@@ -460,9 +336,6 @@ export const kpiPeriods = mysqlTable(
   "kpi_periods",
   {
     id: int("id").autoincrement().primaryKey(),
-    businessId: int("business_id")
-      .notNull()
-      .references(() => businesses.id, { onDelete: "cascade" }),
     name: varchar("name", { length: 191 }).notNull(),
     type: varchar("type", { length: 50 }).notNull(),
     number: int("number").notNull(),
@@ -472,9 +345,8 @@ export const kpiPeriods = mysqlTable(
     updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
   },
   (table) => [
-    index("kpi_periods_business_idx").on(table.businessId),
     index("kpi_periods_year_month_idx").on(table.year, table.month),
-    uniqueIndex("kpi_periods_business_name_unique").on(table.businessId, table.name),
+    uniqueIndex("kpi_periods_name_unique").on(table.name),
   ],
 );
 
@@ -483,9 +355,6 @@ export const kpiData = mysqlTable(
   "kpi_data",
   {
     id: int("id").autoincrement().primaryKey(),
-    businessId: int("business_id")
-      .notNull()
-      .references(() => businesses.id, { onDelete: "cascade" }),
     periodId: int("period_id")
       .notNull()
       .references(() => kpiPeriods.id, { onDelete: "cascade" }),
@@ -501,7 +370,6 @@ export const kpiData = mysqlTable(
     updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
   },
   (table) => [
-    index("kpi_data_business_idx").on(table.businessId),
     index("kpi_data_period_idx").on(table.periodId),
     index("kpi_data_kpi_idx").on(table.kpiId),
     index("kpi_data_entered_by_idx").on(table.enteredBy),
@@ -514,9 +382,6 @@ export const issues = mysqlTable(
   "issues",
   {
     id: int("id").autoincrement().primaryKey(),
-    businessId: int("business_id")
-      .notNull()
-      .references(() => businesses.id, { onDelete: "cascade" }),
     title: varchar("title", { length: 191 }).notNull(),
     description: longtext("description"),
     priority: varchar("priority", { length: 50 }).notNull(),
@@ -528,7 +393,6 @@ export const issues = mysqlTable(
     updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
   },
   (table) => [
-    index("issues_business_idx").on(table.businessId),
     index("issues_owner_idx").on(table.ownerId),
     index("issues_status_idx").on(table.status),
     index("issues_priority_idx").on(table.priority),
@@ -540,9 +404,6 @@ export const todos = mysqlTable(
   "todos",
   {
     id: int("id").autoincrement().primaryKey(),
-    businessId: int("business_id")
-      .notNull()
-      .references(() => businesses.id, { onDelete: "cascade" }),
     issueId: int("issue_id")
       .notNull()
       .references(() => issues.id, { onDelete: "cascade" }),
@@ -556,7 +417,6 @@ export const todos = mysqlTable(
     updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
   },
   (table) => [
-    index("todos_business_idx").on(table.businessId),
     index("todos_issue_idx").on(table.issueId),
     index("todos_owner_idx").on(table.ownerId),
     index("todos_done_idx").on(table.isDone),
@@ -568,9 +428,6 @@ export const meetings = mysqlTable(
   "meetings",
   {
     id: int("id").autoincrement().primaryKey(),
-    businessId: int("business_id")
-      .notNull()
-      .references(() => businesses.id, { onDelete: "cascade" }),
     type: varchar("type", { length: 50 }).notNull(),
     date: timestamp("date").notNull(),
     agenda: longtext("agenda"),
@@ -578,7 +435,6 @@ export const meetings = mysqlTable(
     updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
   },
   (table) => [
-    index("meetings_business_idx").on(table.businessId),
     index("meetings_date_idx").on(table.date),
     index("meetings_type_idx").on(table.type),
   ],
@@ -589,9 +445,6 @@ export const meetingParticipants = mysqlTable(
   "meeting_participants",
   {
     id: int("id").autoincrement().primaryKey(),
-    businessId: int("business_id")
-      .notNull()
-      .references(() => businesses.id, { onDelete: "cascade" }),
     meetingId: int("meeting_id")
       .notNull()
       .references(() => meetings.id, { onDelete: "cascade" }),
@@ -602,7 +455,6 @@ export const meetingParticipants = mysqlTable(
     updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
   },
   (table) => [
-    index("meeting_participants_business_idx").on(table.businessId),
     index("meeting_participants_meeting_idx").on(table.meetingId),
     index("meeting_participants_user_idx").on(table.userId),
     uniqueIndex("meeting_participants_meeting_user_unique").on(table.meetingId, table.userId),
@@ -614,9 +466,6 @@ export const meetingNotes = mysqlTable(
   "meeting_notes",
   {
     id: int("id").autoincrement().primaryKey(),
-    businessId: int("business_id")
-      .notNull()
-      .references(() => businesses.id, { onDelete: "cascade" }),
     meetingId: int("meeting_id")
       .notNull()
       .references(() => meetings.id, { onDelete: "cascade" }),
@@ -628,7 +477,6 @@ export const meetingNotes = mysqlTable(
     updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
   },
   (table) => [
-    index("meeting_notes_business_idx").on(table.businessId),
     index("meeting_notes_meeting_idx").on(table.meetingId),
     index("meeting_notes_created_by_idx").on(table.createdBy),
     index("meeting_notes_private_idx").on(table.isPrivate),
@@ -640,9 +488,6 @@ export const seats = mysqlTable(
   "seats",
   {
     id: int("id").autoincrement().primaryKey(),
-    businessId: int("business_id")
-      .notNull()
-      .references(() => businesses.id, { onDelete: "cascade" }),
     name: varchar("name", { length: 191 }).notNull(),
     parentId: int("parent_id"),
     level: int("level").notNull().default(0),
@@ -651,7 +496,6 @@ export const seats = mysqlTable(
     updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
   },
   (table) => [
-    index("seats_business_idx").on(table.businessId),
     index("seats_parent_idx").on(table.parentId),
     index("seats_level_idx").on(table.level),
   ],
@@ -662,9 +506,6 @@ export const seatResponsibilities = mysqlTable(
   "seat_responsibilities",
   {
     id: int("id").autoincrement().primaryKey(),
-    businessId: int("business_id")
-      .notNull()
-      .references(() => businesses.id, { onDelete: "cascade" }),
     seatId: int("seat_id")
       .notNull()
       .references(() => seats.id, { onDelete: "cascade" }),
@@ -674,7 +515,6 @@ export const seatResponsibilities = mysqlTable(
     updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
   },
   (table) => [
-    index("seat_responsibilities_business_idx").on(table.businessId),
     index("seat_responsibilities_seat_idx").on(table.seatId),
   ],
 );
@@ -684,9 +524,6 @@ export const seatAssignments = mysqlTable(
   "seat_assignments",
   {
     id: int("id").autoincrement().primaryKey(),
-    businessId: int("business_id")
-      .notNull()
-      .references(() => businesses.id, { onDelete: "cascade" }),
     seatId: int("seat_id")
       .notNull()
       .references(() => seats.id, { onDelete: "cascade" }),
@@ -698,7 +535,6 @@ export const seatAssignments = mysqlTable(
     updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
   },
   (table) => [
-    index("seat_assignments_business_idx").on(table.businessId),
     index("seat_assignments_seat_idx").on(table.seatId),
     index("seat_assignments_owner_idx").on(table.ownerId),
     uniqueIndex("seat_assignments_seat_owner_unique").on(table.seatId, table.ownerId),

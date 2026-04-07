@@ -1,18 +1,14 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { zValidator } from '@hono/zod-validator';
-import { SQL, and, asc, desc, eq, like } from 'drizzle-orm';
+import { SQL, asc, desc, eq, like, and } from 'drizzle-orm';
 
 import { db } from '../db/client';
 import { settings } from '../db/schema';
 
 const router = new Hono();
 
-const businessQuery = z.object({
-  businessId: z.coerce.number().int().min(1),
-});
-
-const paginationQuery = businessQuery.extend({
+const paginationQuery = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(20),
   q: z.string().trim().optional(),
@@ -22,18 +18,14 @@ const paginationQuery = businessQuery.extend({
 });
 
 const payloadSchema = z.object({
-  businessId: z.number().int().min(1),
   key: z.string().trim().min(1).max(191),
   dataJson: z.record(z.string(), z.any()).optional(),
 });
 
-const updatePayloadSchema = payloadSchema.partial().extend({
-  businessId: z.number().int().min(1),
-});
+const updatePayloadSchema = payloadSchema.partial();
 
 router.get('/', zValidator('query', paginationQuery), async (c) => {
   const {
-    businessId,
     page,
     limit,
     q,
@@ -44,7 +36,7 @@ router.get('/', zValidator('query', paginationQuery), async (c) => {
 
   const offset = (page - 1) * limit;
 
-  const filters = [eq(settings.businessId, businessId)] as any[];
+  const filters = [] as any[];
   if (q) {
     const value = `%${q}%`;
     filters.push(like(settings.key, value));
@@ -90,16 +82,14 @@ router.get('/', zValidator('query', paginationQuery), async (c) => {
   });
 });
 
-router.get('/:id', zValidator('query', businessQuery), async (c) => {
+router.get('/:id', async (c) => {
   const id = Number(c.req.param('id'));
   if (Number.isNaN(id)) {
     return c.json({ success: false, message: 'ID tidak valid' }, 400);
   }
 
-  const { businessId } = c.req.valid('query');
-
   const record = await db.query.settings.findFirst({
-    where: and(eq(settings.id, id), eq(settings.businessId, businessId)),
+    where: eq(settings.id, id),
   });
 
   if (!record) {
@@ -111,11 +101,11 @@ router.get('/:id', zValidator('query', businessQuery), async (c) => {
 
 router.post('/', zValidator('json', payloadSchema), async (c) => {
   const payload = c.req.valid('json');
-  const { businessId, key, dataJson } = payload;
+  const { key, dataJson } = payload;
 
   const existing = await db.query.settings.findFirst({
     columns: { id: true },
-    where: and(eq(settings.businessId, businessId), eq(settings.key, key)),
+    where: eq(settings.key, key),
   });
 
   if (existing) {
@@ -123,7 +113,6 @@ router.post('/', zValidator('json', payloadSchema), async (c) => {
   }
 
   const [insertResult] = await db.insert(settings).values({
-    businessId,
     key,
     dataJson: dataJson ?? null,
   });
@@ -144,10 +133,9 @@ router.put('/:id', zValidator('json', updatePayloadSchema), async (c) => {
   }
 
   const payload = c.req.valid('json');
-  const { businessId } = payload;
 
   const existingRecord = await db.query.settings.findFirst({
-    where: and(eq(settings.id, id), eq(settings.businessId, businessId)),
+    where: eq(settings.id, id),
   });
 
   if (!existingRecord) {
@@ -160,7 +148,7 @@ router.put('/:id', zValidator('json', updatePayloadSchema), async (c) => {
     const newKey = payload.key.trim();
     const duplicate = await db.query.settings.findFirst({
       columns: { id: true },
-      where: and(eq(settings.businessId, businessId), eq(settings.key, newKey)),
+      where: eq(settings.key, newKey),
     });
 
     if (duplicate && duplicate.id !== id) {
@@ -178,27 +166,25 @@ router.put('/:id', zValidator('json', updatePayloadSchema), async (c) => {
     await db
       .update(settings)
       .set(sets)
-      .where(and(eq(settings.id, id), eq(settings.businessId, businessId)));
+      .where(eq(settings.id, id));
   }
 
   const record = await db.query.settings.findFirst({
-    where: and(eq(settings.id, id), eq(settings.businessId, businessId)),
+    where: eq(settings.id, id),
   });
 
   return c.json({ success: true, data: record });
 });
 
-router.delete('/:id', zValidator('query', businessQuery), async (c) => {
+router.delete('/:id', async (c) => {
   const id = Number(c.req.param('id'));
   if (Number.isNaN(id)) {
     return c.json({ success: false, message: 'ID tidak valid' }, 400);
   }
 
-  const { businessId } = c.req.valid('query');
-
   const existing = await db.query.settings.findFirst({
     columns: { id: true },
-    where: and(eq(settings.id, id), eq(settings.businessId, businessId)),
+    where: eq(settings.id, id),
   });
 
   if (!existing) {
@@ -207,7 +193,7 @@ router.delete('/:id', zValidator('query', businessQuery), async (c) => {
 
   await db
     .delete(settings)
-    .where(and(eq(settings.id, id), eq(settings.businessId, businessId)));
+    .where(eq(settings.id, id));
 
   return c.json({ success: true, message: 'Setting dihapus' });
 });

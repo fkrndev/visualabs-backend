@@ -1,14 +1,13 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { zValidator } from '@hono/zod-validator';
-import { eq, and } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 
 import { db } from '../db/client';
 import { customers, customerProfiles } from '../db/schema';
 import { cleanEmail, cleanPhone } from '../utils/normalizers';
 import { hashPassword } from '../utils/security';
 import { sendRegistrationEmail } from '../utils/email';
-import { getBusinessIdFromOrigin } from '../utils/business';
 
 const router = new Hono();
 
@@ -27,12 +26,8 @@ const registrationPayload = z.object({
  */
 router.post('/', zValidator('json', registrationPayload), async (c) => {
   const payload = c.req.valid('json');
-  const origin = c.req.header('origin') || c.req.header('referer') || null;
 
   const { name, email: rawEmail, phone: rawPhone, password } = payload;
-
-  // Dapatkan businessId berdasarkan origin
-  const businessId = getBusinessIdFromOrigin(origin);
 
   // Normalisasi data
   const email = cleanEmail(rawEmail);
@@ -43,7 +38,7 @@ router.post('/', zValidator('json', registrationPayload), async (c) => {
     // Cek apakah email sudah terdaftar
     const existingEmail = await db.query.customers.findFirst({
       columns: { id: true },
-      where: and(eq(customers.businessId, businessId), eq(customers.email, email)),
+      where: eq(customers.email, email),
     });
 
     if (existingEmail) {
@@ -59,7 +54,7 @@ router.post('/', zValidator('json', registrationPayload), async (c) => {
     // Cek apakah phone sudah terdaftar
     const existingPhone = await db.query.customers.findFirst({
       columns: { id: true },
-      where: and(eq(customers.businessId, businessId), eq(customers.phone, phone)),
+      where: eq(customers.phone, phone),
     });
 
     if (existingPhone) {
@@ -74,7 +69,6 @@ router.post('/', zValidator('json', registrationPayload), async (c) => {
 
     // Insert customer baru
     const [insertResult] = await db.insert(customers).values({
-      businessId,
       email,
       phone,
       password: hashedPassword,
@@ -88,7 +82,6 @@ router.post('/', zValidator('json', registrationPayload), async (c) => {
 
     // Insert customer profile
     await db.insert(customerProfiles).values({
-      businessId,
       customerId: insertId,
       name,
       email: rawEmail,
@@ -100,7 +93,7 @@ router.post('/', zValidator('json', registrationPayload), async (c) => {
       .select({ customer: customers, profile: customerProfiles })
       .from(customers)
       .leftJoin(customerProfiles, eq(customerProfiles.customerId, customers.id))
-      .where(and(eq(customers.id, insertId), eq(customers.businessId, businessId)))
+      .where(eq(customers.id, insertId))
       .limit(1);
 
     const createdRow = createdRows[0];

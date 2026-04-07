@@ -129,7 +129,6 @@ router.post("/test-token", zValidator("json", testTokenSchema), async (c) => {
         iat: now,
         exp,
         rol,
-        bid: 1,
       },
       JWT_SECRET,
     );
@@ -160,7 +159,6 @@ router.post("/test-token", zValidator("json", testTokenSchema), async (c) => {
       {
         sub: String(customer.id),
         typ: TYPE_CUSTOMER,
-        bid: customer.businessId,
         iat: now,
         exp,
       },
@@ -224,7 +222,6 @@ router.post("/login", zValidator("json", loginSchema), async (c) => {
       iat: now,
       exp,
       rol,
-      bid: 1, // hardcode, belum di implementasi kan
     },
     JWT_SECRET,
   );

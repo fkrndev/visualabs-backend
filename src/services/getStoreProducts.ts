@@ -74,7 +74,6 @@ const sortRuleSchema = z.object({
 });
 
 type GetStoreProductsParams = {
-  businessId: number;
   cursor?: number;
   limit: number;
   q?: string;
@@ -106,7 +105,6 @@ type GetStoreProductsParams = {
 
 export const getStoreProducts = async (params: GetStoreProductsParams) => {
   const {
-    businessId,
     cursor,
     limit,
     q,
@@ -128,7 +126,7 @@ export const getStoreProducts = async (params: GetStoreProductsParams) => {
     sorts: sortsParam,
   } = params;
 
-  const baseFilters = [eq(storeProducts.businessId, businessId)] as any[];
+  const baseFilters = [] as any[];
 
   if (cursor) {
     baseFilters.push(gt(storeProducts.id, cursor));
@@ -174,9 +172,8 @@ export const getStoreProducts = async (params: GetStoreProductsParams) => {
       .from(storeProductTypeProducts)
       .where(
         and(
-          eq(storeProductTypeProducts.businessId, businessId),
           eq(storeProductTypeProducts.productTypeId, productTypeId),
-          eq(storeProductTypeProducts.isHide, 0) // Only show active product type associations
+          eq(storeProductTypeProducts.isHide, 0)
         )
       );
     
@@ -325,7 +322,6 @@ export const getStoreProducts = async (params: GetStoreProductsParams) => {
   const query = db
     .select({
       id: storeProducts.id,
-      businessId: storeProducts.businessId,
       sku: storeProducts.sku,
       code: storeProducts.code,
       barcode: storeProducts.barcode,

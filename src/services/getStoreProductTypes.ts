@@ -24,7 +24,6 @@ const filterConditionSchema = z.object({
     "name",
     "slug",
     "desc",
-    "businessId",
     "createdAt",
     "updatedAt",
   ]),
@@ -52,7 +51,6 @@ const sortRuleSchema = z.object({
     "name",
     "slug",
     "desc",
-    "businessId",
     "createdAt",
     "updatedAt",
   ]),
@@ -60,7 +58,6 @@ const sortRuleSchema = z.object({
 });
 
 type GetStoreProductTypesParams = {
-  businessId: number;
   cursor?: number;
   limit: number;
   q?: string;
@@ -71,7 +68,6 @@ type GetStoreProductTypesParams = {
     | "name"
     | "slug"
     | "desc"
-    | "businessId"
     | "createdAt"
     | "updatedAt";
   sortOrder?: "asc" | "desc";
@@ -81,7 +77,6 @@ type GetStoreProductTypesParams = {
 
 export const getStoreProductTypes = async (params: GetStoreProductTypesParams) => {
   const {
-    businessId,
     cursor,
     limit,
     q,
@@ -93,7 +88,7 @@ export const getStoreProductTypes = async (params: GetStoreProductTypesParams) =
     sorts: sortsParam,
   } = params;
 
-  const baseFilters = [eq(storeProductTypes.businessId, businessId)] as any[];
+  const baseFilters = [] as any[];
 
   if (cursor) {
     baseFilters.push(gt(storeProductTypes.id, cursor));
@@ -127,7 +122,6 @@ export const getStoreProductTypes = async (params: GetStoreProductTypesParams) =
           name: storeProductTypes.name,
           slug: storeProductTypes.slug,
           desc: storeProductTypes.desc,
-          businessId: storeProductTypes.businessId,
           createdAt: storeProductTypes.createdAt,
           updatedAt: storeProductTypes.updatedAt,
         };
@@ -180,7 +174,6 @@ export const getStoreProductTypes = async (params: GetStoreProductTypesParams) =
     name: storeProductTypes.name,
     slug: storeProductTypes.slug,
     desc: storeProductTypes.desc,
-    businessId: storeProductTypes.businessId,
     createdAt: storeProductTypes.createdAt,
     updatedAt: storeProductTypes.updatedAt,
   } as const;

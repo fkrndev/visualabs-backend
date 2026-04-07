@@ -24,10 +24,6 @@ import { hashPassword } from '../utils/security';
 
 const router = new Hono();
 
-const businessQuery = z.object({
-  businessId: z.coerce.number().int().min(1),
-});
-
 const filterConditionSchema = z.object({
   field: z.enum([
     'id',
@@ -77,7 +73,7 @@ const sortRuleSchema = z.object({
   direction: z.enum(['asc', 'desc']),
 });
 
-const paginationQuery = businessQuery.extend({
+const paginationQuery = z.object({
   cursor: z.coerce.number().int().optional(),
   limit: z.coerce.number().int().min(1).max(100).default(20),
   q: z.string().trim().optional(),
@@ -95,7 +91,6 @@ const paginationQuery = businessQuery.extend({
 });
 
 const customerPayload = z.object({
-  businessId: z.number().int(),
   email: z.string().email().optional(),
   username: z.string().min(3).optional(),
   phone: z.string().min(6).optional(),
@@ -107,7 +102,6 @@ const customerPayload = z.object({
 });
 
 const customerUpdatePayload = z.object({
-  businessId: z.number().int(),
   email: z.string().email().optional(),
   username: z.string().min(3).optional(),
   phone: z.string().min(6).optional(),
@@ -119,12 +113,10 @@ const customerUpdatePayload = z.object({
 });
 
 const bulkDeleteSchema = z.object({
-  businessId: z.number().int().min(1),
   ids: z.array(z.number().int().min(1)).min(1),
 });
 
 const bulkUpdateSchema = z.object({
-  businessId: z.number().int().min(1),
   ids: z.array(z.number().int().min(1)).min(1),
   updates: z.object({
     email: z.string().email().optional(),
@@ -138,7 +130,6 @@ const bulkUpdateSchema = z.object({
 
 router.get('/', zValidator('query', paginationQuery), async (c) => {
   const {
-    businessId,
     cursor,
     limit,
     q,
@@ -153,7 +144,7 @@ router.get('/', zValidator('query', paginationQuery), async (c) => {
     sorts: sortsParam,
   } = c.req.valid('query');
 
-  const baseFilters = [eq(customers.businessId, businessId)] as any[];
+  const baseFilters = [] as any[];
 
   if (cursor) {
     baseFilters.push(gt(customers.id, cursor));
@@ -307,19 +298,17 @@ router.get('/', zValidator('query', paginationQuery), async (c) => {
   });
 });
 
-router.get('/:id', zValidator('query', businessQuery), async (c) => {
+router.get('/:id', async (c) => {
   const id = Number(c.req.param('id'));
   if (Number.isNaN(id)) {
     return c.json({ success: false, message: 'ID tidak valid' }, 400);
   }
 
-  const { businessId } = c.req.valid('query');
-
   const rows = await db
     .select({ customer: customers, profile: customerProfiles })
     .from(customers)
     .leftJoin(customerProfiles, eq(customerProfiles.customerId, customers.id))
-    .where(and(eq(customers.id, id), eq(customers.businessId, businessId)))
+    .where(eq(customers.id, id))
     .limit(1);
 
   const row = rows[0];
@@ -338,7 +327,6 @@ router.post('/', zValidator('json', customerPayload), async (c) => {
   const payload = c.req.valid('json');
 
   const {
-    businessId,
     email: rawEmail,
     username: rawUsername,
     phone: rawPhone,
@@ -368,7 +356,7 @@ router.post('/', zValidator('json', customerPayload), async (c) => {
     if (email) {
       const existingEmail = await db.query.customers.findFirst({
         columns: { id: true },
-        where: and(eq(customers.businessId, businessId), eq(customers.email, email)),
+        where: eq(customers.email, email),
       });
       if (existingEmail) {
         return c.json({ success: false, message: 'Email sudah digunakan' }, 409);
@@ -378,7 +366,7 @@ router.post('/', zValidator('json', customerPayload), async (c) => {
     if (username) {
       const existingUsername = await db.query.customers.findFirst({
         columns: { id: true },
-        where: and(eq(customers.businessId, businessId), eq(customers.username, username)),
+        where: eq(customers.username, username),
       });
       if (existingUsername) {
         return c.json({ success: false, message: 'Username sudah digunakan' }, 409);
@@ -388,7 +376,7 @@ router.post('/', zValidator('json', customerPayload), async (c) => {
     if (phone) {
       const existingPhone = await db.query.customers.findFirst({
         columns: { id: true },
-        where: and(eq(customers.businessId, businessId), eq(customers.phone, phone)),
+        where: eq(customers.phone, phone),
       });
       if (existingPhone) {
         return c.json({ success: false, message: 'Nomor telepon sudah digunakan' }, 409);
@@ -398,7 +386,7 @@ router.post('/', zValidator('json', customerPayload), async (c) => {
     if (fbid) {
       const existingFbid = await db.query.customers.findFirst({
         columns: { id: true },
-        where: and(eq(customers.businessId, businessId), eq(customers.fbid, fbid)),
+        where: eq(customers.fbid, fbid),
       });
       if (existingFbid) {
         return c.json({ success: false, message: 'FBID sudah digunakan' }, 409);
@@ -408,7 +396,7 @@ router.post('/', zValidator('json', customerPayload), async (c) => {
     if (googleId) {
       const existingGoogleId = await db.query.customers.findFirst({
         columns: { id: true },
-        where: and(eq(customers.businessId, businessId), eq(customers.googleId, googleId)),
+        where: eq(customers.googleId, googleId),
       });
       if (existingGoogleId) {
         return c.json({ success: false, message: 'Google ID sudah digunakan' }, 409);
@@ -416,7 +404,6 @@ router.post('/', zValidator('json', customerPayload), async (c) => {
     }
 
     const [insertResult] = await db.insert(customers).values({
-      businessId,
       email,
       username,
       phone,
@@ -429,7 +416,6 @@ router.post('/', zValidator('json', customerPayload), async (c) => {
     const insertId = Number(insertResult.insertId);
 
     await db.insert(customerProfiles).values({
-      businessId,
       customerId: insertId,
       name: name ?? null,
       email: rawEmail ?? null,
@@ -440,7 +426,7 @@ router.post('/', zValidator('json', customerPayload), async (c) => {
       .select({ customer: customers, profile: customerProfiles })
       .from(customers)
       .leftJoin(customerProfiles, eq(customerProfiles.customerId, customers.id))
-      .where(and(eq(customers.id, insertId), eq(customers.businessId, businessId)))
+      .where(eq(customers.id, insertId))
       .limit(1);
     const createdRow = createdRows[0];
     const created = createdRow
@@ -464,10 +450,9 @@ router.put('/:id', zValidator('json', customerUpdatePayload), async (c) => {
   }
 
   const payload = c.req.valid('json');
-  const businessId = payload.businessId;
 
   const existingCustomer = await db.query.customers.findFirst({
-    where: and(eq(customers.id, id), eq(customers.businessId, businessId)),
+    where: eq(customers.id, id),
   });
 
   if (!existingCustomer) {
@@ -481,7 +466,7 @@ router.put('/:id', zValidator('json', customerUpdatePayload), async (c) => {
     const email = cleanEmail(payload.email);
     const existing = await db.query.customers.findFirst({
       columns: { id: true },
-      where: and(eq(customers.businessId, businessId), eq(customers.email, email)),
+      where: eq(customers.email, email),
     });
     if (existing && existing.id !== id) {
       return c.json({ success: false, message: 'Email sudah digunakan' }, 409);
@@ -494,7 +479,7 @@ router.put('/:id', zValidator('json', customerUpdatePayload), async (c) => {
     const username = payload.username.trim();
     const existing = await db.query.customers.findFirst({
       columns: { id: true },
-      where: and(eq(customers.businessId, businessId), eq(customers.username, username)),
+      where: eq(customers.username, username),
     });
     if (existing && existing.id !== id) {
       return c.json({ success: false, message: 'Username sudah digunakan' }, 409);
@@ -506,7 +491,7 @@ router.put('/:id', zValidator('json', customerUpdatePayload), async (c) => {
     const phone = cleanPhone(payload.phone);
     const existing = await db.query.customers.findFirst({
       columns: { id: true },
-      where: and(eq(customers.businessId, businessId), eq(customers.phone, phone)),
+      where: eq(customers.phone, phone),
     });
     if (existing && existing.id !== id) {
       return c.json({ success: false, message: 'Nomor telepon sudah digunakan' }, 409);
@@ -524,7 +509,7 @@ router.put('/:id', zValidator('json', customerUpdatePayload), async (c) => {
     if (fbid) {
       const existing = await db.query.customers.findFirst({
         columns: { id: true },
-        where: and(eq(customers.businessId, businessId), eq(customers.fbid, fbid)),
+        where: eq(customers.fbid, fbid),
       });
       if (existing && existing.id !== id) {
         return c.json({ success: false, message: 'FBID sudah digunakan' }, 409);
@@ -538,7 +523,7 @@ router.put('/:id', zValidator('json', customerUpdatePayload), async (c) => {
     if (google) {
       const existing = await db.query.customers.findFirst({
         columns: { id: true },
-        where: and(eq(customers.businessId, businessId), eq(customers.googleId, google)),
+        where: eq(customers.googleId, google),
       });
       if (existing && existing.id !== id) {
         return c.json({ success: false, message: 'Google ID sudah digunakan' }, 409);
@@ -560,24 +545,23 @@ router.put('/:id', zValidator('json', customerUpdatePayload), async (c) => {
       await db
         .update(customers)
         .set(sets)
-        .where(and(eq(customers.id, id), eq(customers.businessId, businessId)));
+        .where(eq(customers.id, id));
     }
 
     if (Object.keys(profileUpdates).length) {
       const existingProfile = await db
         .select()
         .from(customerProfiles)
-        .where(and(eq(customerProfiles.customerId, id), eq(customerProfiles.businessId, businessId)))
+        .where(eq(customerProfiles.customerId, id))
         .limit(1);
 
       if (existingProfile.length) {
         await db
           .update(customerProfiles)
           .set(profileUpdates)
-          .where(and(eq(customerProfiles.customerId, id), eq(customerProfiles.businessId, businessId)));
+          .where(eq(customerProfiles.customerId, id));
       } else {
         await db.insert(customerProfiles).values({
-          businessId,
           customerId: id,
           ...profileUpdates,
         });
@@ -588,7 +572,7 @@ router.put('/:id', zValidator('json', customerUpdatePayload), async (c) => {
       .select({ customer: customers, profile: customerProfiles })
       .from(customers)
       .leftJoin(customerProfiles, eq(customerProfiles.customerId, customers.id))
-      .where(and(eq(customers.id, id), eq(customers.businessId, businessId)))
+      .where(eq(customers.id, id))
       .limit(1);
     const updatedRow = updatedRows[0];
     const updated = updatedRow
@@ -607,7 +591,7 @@ router.put('/:id', zValidator('json', customerUpdatePayload), async (c) => {
 });
 
 router.post('/bulk-delete', zValidator('json', bulkDeleteSchema), async (c) => {
-  const { businessId, ids } = c.req.valid('json');
+  const { ids } = c.req.valid('json');
 
   if (ids.length === 0) {
     return c.json({ success: false, message: 'Tidak ada ID yang dipilih' }, 400);
@@ -615,7 +599,7 @@ router.post('/bulk-delete', zValidator('json', bulkDeleteSchema), async (c) => {
 
   const existing = await db.query.customers.findMany({
     columns: { id: true },
-    where: and(eq(customers.businessId, businessId), sql`${customers.id} IN ${ids}`),
+    where: sql`${customers.id} IN ${ids}`,
   });
 
   if (existing.length !== ids.length) {
@@ -624,7 +608,7 @@ router.post('/bulk-delete', zValidator('json', bulkDeleteSchema), async (c) => {
 
   await db
     .delete(customers)
-    .where(and(eq(customers.businessId, businessId), sql`${customers.id} IN ${ids}`));
+    .where(sql`${customers.id} IN ${ids}`);
 
   return c.json({
     success: true,
@@ -634,7 +618,7 @@ router.post('/bulk-delete', zValidator('json', bulkDeleteSchema), async (c) => {
 });
 
 router.post('/bulk-update', zValidator('json', bulkUpdateSchema), async (c) => {
-  const { businessId, ids, updates } = c.req.valid('json');
+  const { ids, updates } = c.req.valid('json');
 
   if (ids.length === 0) {
     return c.json({ success: false, message: 'Tidak ada ID yang dipilih' }, 400);
@@ -645,7 +629,7 @@ router.post('/bulk-update', zValidator('json', bulkUpdateSchema), async (c) => {
   }
 
   const existing = await db.query.customers.findMany({
-    where: and(eq(customers.businessId, businessId), sql`${customers.id} IN ${ids}`),
+    where: sql`${customers.id} IN ${ids}`,
   });
 
   if (existing.length !== ids.length) {
@@ -657,7 +641,6 @@ router.post('/bulk-update', zValidator('json', bulkUpdateSchema), async (c) => {
     const duplicate = await db.query.customers.findFirst({
       columns: { id: true },
       where: and(
-        eq(customers.businessId, businessId),
         eq(customers.email, email),
         sql`${customers.id} NOT IN ${ids}`,
       ),
@@ -672,7 +655,6 @@ router.post('/bulk-update', zValidator('json', bulkUpdateSchema), async (c) => {
     const duplicate = await db.query.customers.findFirst({
       columns: { id: true },
       where: and(
-        eq(customers.businessId, businessId),
         eq(customers.username, username),
         sql`${customers.id} NOT IN ${ids}`,
       ),
@@ -687,7 +669,6 @@ router.post('/bulk-update', zValidator('json', bulkUpdateSchema), async (c) => {
     const duplicate = await db.query.customers.findFirst({
       columns: { id: true },
       where: and(
-        eq(customers.businessId, businessId),
         eq(customers.phone, phone),
         sql`${customers.id} NOT IN ${ids}`,
       ),
@@ -701,7 +682,6 @@ router.post('/bulk-update', zValidator('json', bulkUpdateSchema), async (c) => {
     const duplicate = await db.query.customers.findFirst({
       columns: { id: true },
       where: and(
-        eq(customers.businessId, businessId),
         eq(customers.fbid, updates.fbid),
         sql`${customers.id} NOT IN ${ids}`,
       ),
@@ -715,7 +695,6 @@ router.post('/bulk-update', zValidator('json', bulkUpdateSchema), async (c) => {
     const duplicate = await db.query.customers.findFirst({
       columns: { id: true },
       where: and(
-        eq(customers.businessId, businessId),
         eq(customers.googleId, updates.googleId),
         sql`${customers.id} NOT IN ${ids}`,
       ),
@@ -748,10 +727,10 @@ router.post('/bulk-update', zValidator('json', bulkUpdateSchema), async (c) => {
   await db
     .update(customers)
     .set(sets)
-    .where(and(eq(customers.businessId, businessId), sql`${customers.id} IN ${ids}`));
+    .where(sql`${customers.id} IN ${ids}`);
 
   const updatedRecords = await db.query.customers.findMany({
-    where: and(eq(customers.businessId, businessId), sql`${customers.id} IN ${ids}`),
+    where: sql`${customers.id} IN ${ids}`,
   });
 
   return c.json({

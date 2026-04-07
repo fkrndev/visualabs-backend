@@ -8,11 +8,7 @@ import { customerProfiles, customers } from '../db/schema';
 
 const router = new Hono();
 
-const businessQuery = z.object({
-  businessId: z.coerce.number().int().min(1),
-});
-
-const paginationQuery = businessQuery.extend({
+const paginationQuery = z.object({
   customerId: z.coerce.number().int().optional(),
   q: z.string().trim().optional(),
   name: z.string().trim().optional(),
@@ -27,7 +23,6 @@ const paginationQuery = businessQuery.extend({
 });
 
 const profilePayload = z.object({
-  businessId: z.number().int().min(1),
   customerId: z.number().int().min(1),
   name: z.string().optional(),
   email: z.string().email().optional(),
@@ -35,13 +30,10 @@ const profilePayload = z.object({
   dataJson: z.record(z.string(), z.any()).optional(),
 });
 
-const profileUpdatePayload = profilePayload.partial().extend({
-  businessId: z.number().int().min(1),
-});
+const profileUpdatePayload = profilePayload.partial();
 
 router.get('/', zValidator('query', paginationQuery), async (c) => {
   const {
-    businessId,
     customerId,
     q,
     name,
@@ -55,7 +47,7 @@ router.get('/', zValidator('query', paginationQuery), async (c) => {
 
   const offset = (page - 1) * limit;
 
-  const filters = [eq(customerProfiles.businessId, businessId)] as any[];
+  const filters = [] as any[];
   if (customerId) filters.push(eq(customerProfiles.customerId, customerId));
   if (q) {
     const value = `%${q}%`;
@@ -112,16 +104,14 @@ router.get('/', zValidator('query', paginationQuery), async (c) => {
   });
 });
 
-router.get('/:id', zValidator('query', businessQuery), async (c) => {
+router.get('/:id', async (c) => {
   const id = Number(c.req.param('id'));
   if (Number.isNaN(id)) {
     return c.json({ success: false, message: 'ID tidak valid' }, 400);
   }
 
-  const { businessId } = c.req.valid('query');
-
   const profile = await db.query.customerProfiles.findFirst({
-    where: and(eq(customerProfiles.id, id), eq(customerProfiles.businessId, businessId)),
+    where: eq(customerProfiles.id, id),
     with: { customer: true },
   });
 
@@ -134,11 +124,11 @@ router.get('/:id', zValidator('query', businessQuery), async (c) => {
 
 router.post('/', zValidator('json', profilePayload), async (c) => {
   const payload = c.req.valid('json');
-  const { businessId, customerId, name, email, phone, dataJson } = payload;
+  const { customerId, name, email, phone, dataJson } = payload;
 
   const customer = await db.query.customers.findFirst({
     columns: { id: true },
-    where: and(eq(customers.id, customerId), eq(customers.businessId, businessId)),
+    where: eq(customers.id, customerId),
   });
 
   if (!customer) {
@@ -147,7 +137,7 @@ router.post('/', zValidator('json', profilePayload), async (c) => {
 
   const existing = await db.query.customerProfiles.findFirst({
     columns: { id: true },
-    where: and(eq(customerProfiles.customerId, customerId), eq(customerProfiles.businessId, businessId)),
+    where: eq(customerProfiles.customerId, customerId),
   });
 
   if (existing) {
@@ -155,7 +145,6 @@ router.post('/', zValidator('json', profilePayload), async (c) => {
   }
 
   const [insertResult] = await db.insert(customerProfiles).values({
-    businessId,
     customerId,
     name: name ?? null,
     email: email ?? null,
@@ -180,10 +169,9 @@ router.put('/:id', zValidator('json', profileUpdatePayload), async (c) => {
   }
 
   const payload = c.req.valid('json');
-  const { businessId } = payload;
 
   const existingProfile = await db.query.customerProfiles.findFirst({
-    where: and(eq(customerProfiles.id, id), eq(customerProfiles.businessId, businessId)),
+    where: eq(customerProfiles.id, id),
   });
 
   if (!existingProfile) {
@@ -195,7 +183,7 @@ router.put('/:id', zValidator('json', profileUpdatePayload), async (c) => {
   if (payload.customerId !== undefined) {
     const customer = await db.query.customers.findFirst({
       columns: { id: true },
-      where: and(eq(customers.id, payload.customerId), eq(customers.businessId, businessId)),
+      where: eq(customers.id, payload.customerId),
     });
     if (!customer) {
       return c.json({ success: false, message: 'Customer tidak ditemukan pada bisnis ini' }, 404);
@@ -205,7 +193,6 @@ router.put('/:id', zValidator('json', profileUpdatePayload), async (c) => {
       columns: { id: true },
       where: and(
         eq(customerProfiles.customerId, payload.customerId),
-        eq(customerProfiles.businessId, businessId),
         ne(customerProfiles.id, id)
       ),
     });
@@ -226,28 +213,26 @@ router.put('/:id', zValidator('json', profileUpdatePayload), async (c) => {
     await db
       .update(customerProfiles)
       .set(sets)
-      .where(and(eq(customerProfiles.id, id), eq(customerProfiles.businessId, businessId)));
+      .where(eq(customerProfiles.id, id));
   }
 
   const profile = await db.query.customerProfiles.findFirst({
-    where: and(eq(customerProfiles.id, id), eq(customerProfiles.businessId, businessId)),
+    where: eq(customerProfiles.id, id),
     with: { customer: true },
   });
 
   return c.json({ success: true, data: profile });
 });
 
-router.delete('/:id', zValidator('query', businessQuery), async (c) => {
+router.delete('/:id', async (c) => {
   const id = Number(c.req.param('id'));
   if (Number.isNaN(id)) {
     return c.json({ success: false, message: 'ID tidak valid' }, 400);
   }
 
-  const { businessId } = c.req.valid('query');
-
   const existing = await db.query.customerProfiles.findFirst({
     columns: { id: true },
-    where: and(eq(customerProfiles.id, id), eq(customerProfiles.businessId, businessId)),
+    where: eq(customerProfiles.id, id),
   });
 
   if (!existing) {
@@ -256,7 +241,7 @@ router.delete('/:id', zValidator('query', businessQuery), async (c) => {
 
   await db
     .delete(customerProfiles)
-    .where(and(eq(customerProfiles.id, id), eq(customerProfiles.businessId, businessId)));
+    .where(eq(customerProfiles.id, id));
 
   return c.json({ success: true, message: 'Profile customer dihapus' });
 });

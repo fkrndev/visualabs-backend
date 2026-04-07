@@ -7,15 +7,13 @@ import userRoutes from "./routes/users";
 import profileRoutes from "./routes/profiles";
 import customerRoutes from "./routes/customers";
 import customerProfileRoutes from "./routes/customerProfiles";
-import businessRoutes from "./routes/businesses";
-import businessUserRoutes from "./routes/businessUsers";
 import settingMultipleRoutes from "./routes/settingMultiples";
 import authRoutes from "./routes/auth";
 import registrationRoutes from "./routes/registration";
 import customerAuthRoutes from "./routes/customerAuth";
 import settingsRoutes from "./routes/settings";
 import openApiSpec from "./openapi/spec";
-import { fetchBusinessUserRolesByUserId, role } from "./utils/auth/role";
+import { role } from "./utils/auth/role";
 // import { readFileSync } from "fs";
 
 config();
@@ -66,8 +64,6 @@ app.get("/openapi.json", (c) => c.json(openApiSpec));
 
 app.route("/users", userRoutes);
 app.route("/profiles", profileRoutes);
-app.route("/businesses", businessRoutes);
-app.route("/business-users", businessUserRoutes);
 app.route("/setting-multiples", settingMultipleRoutes);
 app.route("/customers", customerRoutes);
 app.route("/customer-profiles", customerProfileRoutes);
