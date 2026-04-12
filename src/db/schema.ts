@@ -1,4 +1,5 @@
 import {
+  date,
   decimal,
   index,
   int,
@@ -6,6 +7,7 @@ import {
   longtext,
   mysqlTable,
   serial,
+  text,
   timestamp,
   tinyint,
   uniqueIndex,
@@ -128,6 +130,7 @@ export const users = mysqlTable(
     fbid: varchar("fbid", { length: 191 }),
     googleId: varchar("googleid", { length: 191 }),
     password: varchar("password", { length: 255 }),
+    role: int("role").default(1).notNull(),
     dataJson: json("data_json").$type<JsonRecord>(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
@@ -412,5 +415,72 @@ export const chromeWhatsappContactRelations = relations(chromeWhatsappContacts, 
   whatsapp: one(chromeWhatsapps, {
     fields: [chromeWhatsappContacts.whatsappId],
     references: [chromeWhatsapps.id],
+  }),
+}));
+
+// ─── Products & Subscriptions ────────────────────────────────────────────
+
+export const products = mysqlTable(
+  "products",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    name: varchar("name", { length: 191 }).notNull(),
+    description: text("description"),
+    price: decimal("price", { precision: 12, scale: 2 }).default("0"),
+    dataJson: json("data_json").$type<JsonRecord>(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("products_name_unique").on(table.name),
+  ],
+);
+
+export const subscriptions = mysqlTable(
+  "subscriptions",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    customerId: int("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    productId: int("product_id")
+      .notNull()
+      .references(() => products.id, { onDelete: "cascade" }),
+    advertiserId: int("advertiser_id")
+      .references(() => users.id, { onDelete: "set null" }),
+    brand: varchar("brand", { length: 191 }),
+    platform: varchar("platform", { length: 191 }),
+    startDate: date("start_date"),
+    dueDate: date("due_date"),
+    status: int("status").default(1).notNull(),
+    note: text("note"),
+    dataJson: json("data_json").$type<JsonRecord>(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+  },
+  (table) => [
+    index("subscriptions_customer_idx").on(table.customerId),
+    index("subscriptions_product_idx").on(table.productId),
+    index("subscriptions_advertiser_idx").on(table.advertiserId),
+    index("subscriptions_status_idx").on(table.status),
+  ],
+);
+
+export const productRelations = relations(products, ({ many }) => ({
+  subscriptions: many(subscriptions),
+}));
+
+export const subscriptionRelations = relations(subscriptions, ({ one }) => ({
+  customer: one(customers, {
+    fields: [subscriptions.customerId],
+    references: [customers.id],
+  }),
+  product: one(products, {
+    fields: [subscriptions.productId],
+    references: [products.id],
+  }),
+  advertiser: one(users, {
+    fields: [subscriptions.advertiserId],
+    references: [users.id],
   }),
 }));

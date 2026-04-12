@@ -21,7 +21,7 @@ const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "";
 const GOOGLE_REDIRECT_URI =
   process.env.GOOGLE_REDIRECT_URI ||
   "http://localhost:3006/api/public/auth/google/callback";
-const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:8888";
+const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:2026";
 
 const loginSchema = z.object({
   identifier: z.string().min(3),

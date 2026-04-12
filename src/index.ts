@@ -12,6 +12,8 @@ import authRoutes from "./routes/auth";
 import registrationRoutes from "./routes/registration";
 import customerAuthRoutes from "./routes/customerAuth";
 import settingsRoutes from "./routes/settings";
+import productRoutes from "./routes/products";
+import subscriptionRoutes from "./routes/subscriptions";
 import openApiSpec from "./openapi/spec";
 import { role } from "./utils/auth/role";
 // import { readFileSync } from "fs";
@@ -31,7 +33,7 @@ const publicCors = cors({
 
 // CORS untuk protected routes
 const protectedCors = cors({
-  origin: ["http://localhost:8888", "http://127.0.0.1:8888"], // Sesuaikan dengan domain yang diizinkan
+  origin: ["http://localhost:2026", "http://127.0.0.1:2026"], // Sesuaikan dengan domain yang diizinkan
   allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
   allowHeaders: ["Content-Type", "Authorization"],
   credentials: true,
@@ -71,6 +73,8 @@ app.route("/auth", authRoutes);
 app.route("/public/registration", registrationRoutes);
 app.route("/public", customerAuthRoutes);
 app.route("/settings", settingsRoutes);
+app.route("/products", productRoutes);
+app.route("/subscriptions", subscriptionRoutes);
 
 app.notFound((c) => {
   return c.json(

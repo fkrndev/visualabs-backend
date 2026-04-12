@@ -209,7 +209,7 @@ export function getRegistrationEmailTemplate(name: string, email: string): strin
             </div>
             
             <div style="text-align: center;">
-                <a href="${process.env.FRONTEND_URL || 'http://localhost:8888'}/login" class="button">
+                <a href="${process.env.FRONTEND_URL || 'http://localhost:2026'}/login" class="button">
                     Masuk ke Akun Anda
                 </a>
             </div>
@@ -279,7 +279,7 @@ Terima kasih telah mendaftar! Akun Anda telah berhasil dibuat dan siap digunakan
 
 Email: ${email}
 
-Silakan login ke akun Anda di: ${process.env.FRONTEND_URL || 'http://localhost:8888'}/login
+Silakan login ke akun Anda di: ${process.env.FRONTEND_URL || 'http://localhost:2026'}/login
 
 Apa yang bisa Anda lakukan:
 - Kelola profil dan informasi akun Anda

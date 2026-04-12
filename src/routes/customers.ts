@@ -590,6 +590,25 @@ router.put('/:id', zValidator('json', customerUpdatePayload), async (c) => {
   }
 });
 
+router.delete('/:id', async (c) => {
+  const id = Number(c.req.param('id'));
+  if (Number.isNaN(id)) {
+    return c.json({ success: false, message: 'ID tidak valid' }, 400);
+  }
+
+  const existing = await db.query.customers.findFirst({
+    columns: { id: true },
+    where: eq(customers.id, id),
+  });
+
+  if (!existing) {
+    return c.json({ success: false, message: 'Customer tidak ditemukan' }, 404);
+  }
+
+  await db.delete(customers).where(eq(customers.id, id));
+  return c.json({ success: true, message: 'Customer dihapus' });
+});
+
 router.post('/bulk-delete', zValidator('json', bulkDeleteSchema), async (c) => {
   const { ids } = c.req.valid('json');
 

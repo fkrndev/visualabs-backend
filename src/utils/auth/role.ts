@@ -12,5 +12,5 @@ export async function role(userId: number): Promise<number | null> {
     where: eq(users.id, userId),
   });
 
-  return user ? 1 : null;
+  return user ? user.role : null;
 }

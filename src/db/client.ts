@@ -11,7 +11,7 @@ const {
   DB_PORT = '3306',
   DB_USER = 'root',
   DB_PASSWORD = '',
-  DB_NAME = 'dbxxx',
+  DB_NAME = 'vlabs',
   DB_POOL_SIZE = '10',
 } = process.env;
 

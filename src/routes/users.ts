@@ -31,6 +31,7 @@ const userPayload = z.object({
   phone: z.string().min(6).optional(),
   password: z.string().min(8).optional(),
   name: z.string().min(1).optional(),
+  role: z.coerce.number().int().min(0).max(6).optional(),
 });
 
 const updateUserPayload = userPayload.partial().extend({
@@ -87,19 +88,22 @@ router.get('/', zValidator('query', paginationQuery), async (c) => {
     orders.push(asc(sortMap.id));
   }
 
-  const queryOptions: Parameters<typeof db.query.users.findMany>[0] = {
-    orderBy: orders,
-    limit,
-    offset,
-  };
+  const query = db
+    .select({ user: users, profile: profiles })
+    .from(users)
+    .leftJoin(profiles, eq(profiles.userId, users.id))
+    .orderBy(...orders)
+    .limit(limit)
+    .offset(offset);
 
   if (whereExpr) {
-    queryOptions.where = whereExpr as any;
+    query.where(whereExpr);
   }
 
-  const items = await db.query.users.findMany(queryOptions);
+  const rows = await query;
+  const items = rows.map((r) => ({ ...(r.user as any), profile: r.profile ?? null }));
 
-  const lastId = items.length ? (items[items.length - 1] as any).id ?? null : null;
+  const lastId = items.length ? items[items.length - 1].id ?? null : null;
   const hasNext = items.length === limit;
 
   return c.json({
@@ -134,7 +138,7 @@ router.get('/:id', async (c) => {
 router.post('/', zValidator('json', userPayload), async (c) => {
   const payload = c.req.valid('json');
 
-  const { email: rawEmail, username: rawUsername, phone: rawPhone, password, name } =
+  const { email: rawEmail, username: rawUsername, phone: rawPhone, password, name, role } =
     payload;
 
   const email = rawEmail ? cleanEmail(rawEmail) : null;
@@ -189,6 +193,7 @@ router.post('/', zValidator('json', userPayload), async (c) => {
       username,
       phone,
       password: hashedPassword,
+      role: role ?? 1,
     });
 
     const insertId = Number(insertResult.insertId);
@@ -272,6 +277,7 @@ router.put('/:id', zValidator('json', updateUserPayload), async (c) => {
   if (payload.name !== undefined) {
     profileUpdates.name = payload.name ?? null;
   }
+  if (payload.role !== undefined) sets.role = payload.role;
   if (payload.password) sets.password = await hashPassword(payload.password);
 
   try {
