@@ -14,6 +14,13 @@ import customerAuthRoutes from "./routes/customerAuth";
 import settingsRoutes from "./routes/settings";
 import productRoutes from "./routes/products";
 import subscriptionRoutes from "./routes/subscriptions";
+import chromeProfileRoutes from "./routes/chromeProfiles";
+import chromeHistoryRoutes from "./routes/chromeHistories";
+import ticketIssueRoutes from "./routes/ticketIssues";
+import meetingRoutes from "./routes/meetings";
+import scorecardRoutes from "./routes/scorecards";
+import scorecardDataRoutes from "./routes/scorecardData";
+import todoRoutes from "./routes/todos";
 import openApiSpec from "./openapi/spec";
 import { role } from "./utils/auth/role";
 // import { readFileSync } from "fs";
@@ -75,6 +82,13 @@ app.route("/public", customerAuthRoutes);
 app.route("/settings", settingsRoutes);
 app.route("/products", productRoutes);
 app.route("/subscriptions", subscriptionRoutes);
+app.route("/chrome-profiles", chromeProfileRoutes);
+app.route("/chrome-histories", chromeHistoryRoutes);
+app.route("/ticket-issues", ticketIssueRoutes);
+app.route("/meetings", meetingRoutes);
+app.route("/scorecards", scorecardRoutes);
+app.route("/scorecard-data", scorecardDataRoutes);
+app.route("/todos", todoRoutes);
 
 app.notFound((c) => {
   return c.json(

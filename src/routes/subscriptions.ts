@@ -34,6 +34,9 @@ const subscriptionPayload = z.object({
   startDate: z.string().optional(),
   dueDate: z.string().optional(),
   status: z.coerce.number().int().default(1),
+  onboardingDate: z.string().optional(),
+  onboardingStatus: z.coerce.number().int().min(0).max(3).optional(),
+  target: z.string().optional(),
   note: z.string().optional(),
 });
 
@@ -165,6 +168,10 @@ router.post('/', zValidator('json', subscriptionPayload), async (c) => {
       startDate: payload.startDate ?? null,
       dueDate: payload.dueDate ?? null,
       status: payload.status ?? 1,
+      onboardingDate: payload.onboardingDate ?? null,
+      onboardingStatus: payload.onboardingStatus ?? 0,
+      target: payload.target ?? null,
+      onboardingUpdatedAt: payload.onboardingStatus !== undefined ? new Date() : null,
       note: payload.note ?? null,
     });
 
@@ -199,6 +206,12 @@ router.put('/:id', zValidator('json', updateSubscriptionPayload), async (c) => {
   if (payload.startDate !== undefined) sets.startDate = payload.startDate ?? null;
   if (payload.dueDate !== undefined) sets.dueDate = payload.dueDate ?? null;
   if (payload.status !== undefined) sets.status = payload.status;
+  if (payload.onboardingDate !== undefined) sets.onboardingDate = payload.onboardingDate ?? null;
+  if (payload.onboardingStatus !== undefined) {
+    sets.onboardingStatus = payload.onboardingStatus;
+    sets.onboardingUpdatedAt = new Date();
+  }
+  if (payload.target !== undefined) sets.target = payload.target ?? null;
   if (payload.note !== undefined) sets.note = payload.note ?? null;
 
   if (!Object.keys(sets).length) {
