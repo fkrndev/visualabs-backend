@@ -60,12 +60,20 @@ async function computeAutoFields(scorecardId: number, year: number, month?: numb
   const finalTarget = targetValue ?? (sc?.targetValue ?? null);
 
   // Auto threshold
+  // targetType 0 = minimum (actual lebih besar lebih baik): pct = actual/target * 100
+  // targetType 1 = maximum (actual lebih kecil lebih baik): pct = target/actual * 100
   let threshold = 0;
   if (sc && finalTarget) {
     const actual = parseFloat(actualValue || '0');
     const target = parseFloat(String(finalTarget));
     if (target > 0) {
-      const pct = Math.round((actual / target) * 100);
+      const targetType = sc.targetType ?? 0;
+      let pct: number;
+      if (targetType === 1) {
+        pct = actual > 0 ? Math.round((target / actual) * 100) : 999;
+      } else {
+        pct = Math.round((actual / target) * 100);
+      }
       const green = sc.greenThreshold ?? 100;
       const yellow = sc.yellowThreshold ?? 80;
       if (pct >= green) threshold = 0;
@@ -148,6 +156,7 @@ function formatRow(row: any) {
           pic: row.scorecard.pic,
           category: row.scorecard.category,
           frequency: row.scorecard.frequency,
+          targetType: row.scorecard.targetType,
           customer: row.customer ? { id: row.customer.id, username: row.customer.username } : null,
           customerProfile: row.customerProfile ? { id: row.customerProfile.id, name: row.customerProfile.name } : null,
           subscription: row.subscription ? { id: row.subscription.id, brand: row.subscription.brand } : null,
@@ -171,6 +180,7 @@ function buildSelectQuery() {
         pic: scorecards.pic,
         category: scorecards.category,
         frequency: scorecards.frequency,
+        targetType: scorecards.targetType,
       },
       customer: {
         id: customers.id,
@@ -212,12 +222,13 @@ const dashboardQuery = z.object({
   category: z.coerce.number().int().optional(),
   pic: z.coerce.number().int().optional(),
   assignedTo: z.coerce.number().int().optional(),
+  threshold: z.coerce.number().int().optional(),
   sortBy: z.enum(['id', 'year', 'month', 'week', 'day', 'actualValue', 'targetValue', 'threshold', 'trend', 'createdAt']).optional(),
   sortOrder: z.enum(['asc', 'desc']).optional(),
 });
 
 router.get('/dashboard', zValidator('query', dashboardQuery), async (c) => {
-  const { page, limit, customerId, subscriptionId, category, pic, assignedTo, sortBy: sortByParam, sortOrder: sortOrderParam } = c.req.valid('query');
+  const { page, limit, customerId, subscriptionId, category, pic, assignedTo, threshold, sortBy: sortByParam, sortOrder: sortOrderParam } = c.req.valid('query');
   const offset = (page - 1) * limit;
 
   const filters: any[] = [eq(scorecardData.status, 1)];
@@ -226,6 +237,7 @@ router.get('/dashboard', zValidator('query', dashboardQuery), async (c) => {
   if (category !== undefined) filters.push(eq(scorecards.category, category));
   if (pic !== undefined) filters.push(eq(scorecards.pic, pic));
   if (assignedTo !== undefined) filters.push(eq(scorecards.assignedTo, assignedTo));
+  if (threshold !== undefined) filters.push(eq(scorecardData.threshold, threshold));
 
   const sortMap = {
     id: scorecardData.id,

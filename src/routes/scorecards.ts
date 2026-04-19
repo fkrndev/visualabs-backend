@@ -37,6 +37,7 @@ const scorecardPayload = z.object({
   pic: z.coerce.number().int().default(0),
   category: z.coerce.number().int().default(0),
   targetValue: z.string().optional(),
+  targetType: z.coerce.number().int().default(0),
   unitValue: z.coerce.number().int().default(0),
   unitCustom: z.string().optional(),
   frequency: z.coerce.number().int().default(1),
@@ -181,6 +182,7 @@ router.post('/', zValidator('json', scorecardPayload), async (c) => {
       pic: payload.pic ?? 0,
       category: payload.category ?? 0,
       targetValue: payload.targetValue ?? null,
+      targetType: payload.targetType ?? 0,
       unitValue: payload.unitValue ?? 0,
       unitCustom: payload.unitCustom ?? null,
       frequency: payload.frequency ?? 1,
@@ -221,6 +223,7 @@ router.put('/:id', zValidator('json', updateScorecardPayload), async (c) => {
   if (payload.pic !== undefined) sets.pic = payload.pic;
   if (payload.category !== undefined) sets.category = payload.category;
   if (payload.targetValue !== undefined) sets.targetValue = payload.targetValue ?? null;
+  if (payload.targetType !== undefined) sets.targetType = payload.targetType;
   if (payload.unitValue !== undefined) sets.unitValue = payload.unitValue;
   if (payload.unitCustom !== undefined) sets.unitCustom = payload.unitCustom ?? null;
   if (payload.frequency !== undefined) sets.frequency = payload.frequency;

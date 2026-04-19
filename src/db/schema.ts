@@ -586,6 +586,7 @@ export const scorecards = mysqlTable(
     pic: int("pic").default(0).notNull(), // 0 = internal (advertiser), 1 = client
     category: int("category").default(0).notNull(), // 0 = goal / target, 1 = indikator, 2 = aktifitas yang bisa di ukur
     targetValue: decimal("target_value", { precision: 14, scale: 2 }),
+    targetType: int("target_type").default(0).notNull(), // 0 = minimum (actual lebih besar = lebih baik), 1 = maximum (actual lebih kecil = lebih baik)
     unitValue: int("unit_value").default(0).notNull(),
     unitCustom: varchar("unit_custom", { length: 100 }),
     frequency: int("frequency").default(1).notNull(),
