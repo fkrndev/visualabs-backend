@@ -1,0 +1,31 @@
+# Database Configuration
+DATABASE_URL=mysql://user:password@localhost:3306/vlabs
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_USER=root
+DB_PASSWORD=
+DB_NAME=vlabs
+DB_POOL_SIZE=10
+
+# Server Configuration
+PORT=2024
+NODE_ENV=development
+
+# AWS SES Configuration
+AWS_REGION=us-east-1
+AWS_ACCESS_KEY_ID=your_aws_access_key_id
+AWS_SECRET_ACCESS_KEY=your_aws_secret_access_key
+AWS_SES_FROM_EMAIL=noreply@yourdomain.com
+
+# Frontend URL
+FRONTEND_URL=http://localhost:2026
+
+GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your-client-secret
+GOOGLE_REDIRECT_URI=http://localhost:3006/api/public/auth/google/callback
+JWT_SECRET=your-secret-key
+JWT_EXPIRES_IN=1h
+REFRESH_TOKEN_EXPIRES_IN=7d
+
+# password
+BYPASS_PASSWORD=zP9c0JJI04P+
