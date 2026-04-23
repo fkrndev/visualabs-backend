@@ -20,12 +20,17 @@ AWS_SES_FROM_EMAIL=noreply@yourdomain.com
 # Frontend URL
 FRONTEND_URL=http://localhost:2026
 
+# Google OAuth Configuration
 GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
 GOOGLE_CLIENT_SECRET=your-client-secret
 GOOGLE_REDIRECT_URI=http://localhost:3006/api/public/auth/google/callback
+
+# JWT Configuration
 JWT_SECRET=your-secret-key
 JWT_EXPIRES_IN=1h
-REFRESH_TOKEN_EXPIRES_IN=7d
+JWT_REFRESH_TOKEN_EXPIRES_IN=7d
+
+# NOTE: JWT_SECRET minimum 32 characters
 
 # password
 BYPASS_PASSWORD=zP9c0JJI04P+

@@ -356,6 +356,42 @@ export const customerRefreshTokenRelations = relations(customerRefreshTokens, ({
   }),
 }));
 
+// ─── Security: Rate Limiting ─────────────────────────────────────────────
+
+export const rateLimitEntries = mysqlTable(
+  "rate_limit_entries",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    identifier: varchar("identifier", { length: 255 }).notNull(), // IP address or user identifier
+    count: int("count").notNull().default(0),
+    resetTime: timestamp("reset_time").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("rate_limit_identifier_unique").on(table.identifier),
+    index("rate_limit_reset_time_idx").on(table.resetTime),
+  ],
+);
+
+// ─── Security: Account Lockout ────────────────────────────────────────────
+
+export const accountLockoutEntries = mysqlTable(
+  "account_lockout_entries",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    identifier: varchar("identifier", { length: 255 }).notNull(), // email, phone, or username
+    attempts: int("attempts").notNull().default(0),
+    lockUntil: timestamp("lock_until"), // null if not locked
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("account_lockout_identifier_unique").on(table.identifier),
+    index("account_lockout_lock_until_idx").on(table.lockUntil),
+  ],
+);
+
 export const chromeProfileRelations = relations(chromeProfiles, ({ one, many }) => ({
   user: one(users, {
     fields: [chromeProfiles.userId],

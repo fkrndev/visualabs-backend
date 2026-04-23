@@ -7,23 +7,50 @@ import { sign } from "hono/jwt";
 import { db } from "../db/client";
 import { profiles, users, refreshTokens, customers } from "../db/schema";
 import { cleanEmail, cleanPhone } from "../utils/normalizers";
+import {
+  parseExpiry,
+  generateRefreshToken,
+  addSeconds,
+  resolveUserIdentifierWhere,
+} from "../utils/auth/shared";
 import { generateResetToken, verifyPassword } from "../utils/security";
+import { sanitizeUserProfile } from "../utils/security/xss";
 import { randomBytes } from "crypto";
 import {
   JWT_EXPIRES_IN,
   JWT_SECRET,
+  JWT_REFRESH_TOKEN_EXPIRES_IN,
   requireAuth,
   getAuthUserId,
 } from "../middleware/auth";
 import { TYPE_ADMIN, TYPE_CUSTOMER } from "../constants/auth";
 import type { JwtPayload } from "../middleware/auth";
 import { role } from "../utils/auth/role";
+import {
+  getGoogleAuthUrl,
+  handleGoogleOAuthCallback,
+} from "../utils/auth/googleOAuth";
+import { rateLimit } from "../middleware/rateLimit";
+import {
+  checkLockout,
+  recordFailedAttempt,
+  recordSuccessfulAttempt,
+} from "../utils/security/accountLockout";
+import {
+  logLoginSuccess,
+  logLoginFailed,
+  logAccountLocked,
+  logLogout,
+  logTokenRefresh,
+  logOAuthSuccess,
+  logOAuthFailed,
+} from "../utils/security/securityLogger";
 
 const router = new Hono();
 
 const loginSchema = z.object({
   identifier: z.string().min(3),
-  password: z.string().min(8),
+  password: z.string().min(1, "Password wajib diisi"),
 });
 
 const profileSchema = z.object({
@@ -51,50 +78,6 @@ const testTokenSchema = z
     path: ["userId"],
   });
 
-const parseExpiry = (value: string | undefined): number => {
-  if (!value) return 3600;
-  const match = value.match(/^(\d+)([smhd])$/i);
-  if (!match) return Number(value) || 3600;
-  const amount = Number(match[1]);
-  const unit = match[2].toLowerCase();
-  const unitMap: Record<string, number> = {
-    s: 1,
-    m: 60,
-    h: 3600,
-    d: 86400,
-  };
-  return amount * (unitMap[unit] ?? 3600);
-};
-
-const resolveIdentifierWhere = (identifier: string) => {
-  if (identifier.includes("@")) {
-    return {
-      column: users.email,
-      value: cleanEmail(identifier),
-    };
-  }
-
-  const phoneCandidate = identifier.replace(/[\s-]/g, "");
-  if (/^\+?\d+$/.test(phoneCandidate)) {
-    return {
-      column: users.phone,
-      value: cleanPhone(identifier),
-    };
-  }
-
-  return {
-    column: users.username,
-    value: identifier.trim(),
-  };
-};
-
-const REFRESH_TOKEN_EXPIRES_IN = process.env.REFRESH_TOKEN_EXPIRES_IN ?? "7d";
-
-const generateRefreshToken = () => randomBytes(48).toString("hex");
-
-const addSeconds = (date: Date, seconds: number) => {
-  return new Date(date.getTime() + seconds * 1000);
-};
 
 router.post("/test-token", zValidator("json", testTokenSchema), async (c) => {
   if (process.env.NODE_ENV === "production") {
@@ -181,16 +164,39 @@ router.post("/test-token", zValidator("json", testTokenSchema), async (c) => {
   );
 });
 
-router.post("/login", zValidator("json", loginSchema), async (c) => {
+router.post(
+  "/login",
+  rateLimit({ windowMs: 15 * 60 * 1000, maxRequests: 5 }), // 5 requests per 15 minutes
+  zValidator("json", loginSchema),
+  async (c) => {
   const { identifier, password } = c.req.valid("json");
-  const { column, value } = resolveIdentifierWhere(identifier);
+  const { column, value } = resolveUserIdentifierWhere(identifier);
 
-  console.log("identifier", identifier);
+  // Get IP address for logging
+  const ipAddress = c.req.header('x-forwarded-for')?.split(',')[0] ||
+                   c.req.header('x-real-ip') ||
+                   'unknown';
+  const userAgent = c.req.header('user-agent');
+
+  // Check account lockout
+  const lockoutStatus = await checkLockout(identifier);
+  if (lockoutStatus.isLocked) {
+    logAccountLocked(identifier, 5, lockoutStatus.lockRemainingTime, ipAddress);
+    return c.json(
+      {
+        success: false,
+        message: `Akun terkunci sementara. Silakan coba lagi dalam ${Math.ceil(lockoutStatus.lockRemainingTime / 60000)} menit.`,
+      },
+      423,
+    );
+  }
 
   const currentUser = await db.query.users.findFirst({
     where: eq(column, value),
   });
   if (!currentUser) {
+    await recordFailedAttempt(identifier);
+    logLoginFailed(identifier, 'User not found', ipAddress, userAgent);
     return c.json({ success: false, message: "Kredensial salah" }, 401);
   }
 
@@ -198,6 +204,8 @@ router.post("/login", zValidator("json", loginSchema), async (c) => {
 
   if (!bypassPassword || password !== bypassPassword) {
     if (!currentUser.password) {
+      await recordFailedAttempt(identifier);
+      logLoginFailed(identifier, 'No password set', ipAddress, userAgent);
       return c.json(
         { success: false, message: "Akun ini tidak memiliki password" },
         401,
@@ -206,9 +214,27 @@ router.post("/login", zValidator("json", loginSchema), async (c) => {
 
     const isMatch = await verifyPassword(password, currentUser.password);
     if (!isMatch) {
+      const failedResult = await recordFailedAttempt(identifier);
+      logLoginFailed(identifier, 'Invalid password', ipAddress, userAgent);
+
+      if (failedResult.isLocked) {
+        logAccountLocked(identifier, 5, failedResult.lockRemainingTime, ipAddress);
+        return c.json(
+          {
+            success: false,
+            message: `Terlalu banyak percobaan gagal. Akun terkunci sementara. Silakan coba lagi dalam ${Math.ceil(failedResult.lockRemainingTime / 60000)} menit.`,
+          },
+          423,
+        );
+      }
+
       return c.json({ success: false, message: "Kredensial salah" }, 401);
     }
   }
+
+  // Successful login - reset lockout and log
+  await recordSuccessfulAttempt(identifier);
+  logLoginSuccess(currentUser.id, undefined, identifier, ipAddress, userAgent);
 
   const now = Math.floor(Date.now() / 1000);
   const exp = now + parseExpiry(JWT_EXPIRES_IN);
@@ -230,7 +256,7 @@ router.post("/login", zValidator("json", loginSchema), async (c) => {
   const refreshTkn = generateRefreshToken();
   const refreshExpAt = addSeconds(
     new Date(),
-    parseExpiry(REFRESH_TOKEN_EXPIRES_IN),
+    parseExpiry(JWT_REFRESH_TOKEN_EXPIRES_IN),
   );
   await db.insert(refreshTokens as any).values({
     userId: currentUser.id,
@@ -238,30 +264,44 @@ router.post("/login", zValidator("json", loginSchema), async (c) => {
     expiresAt: refreshExpAt,
   });
 
+  // Set refresh token as httpOnly cookie
+  const cookieOptions = `HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${parseExpiry(JWT_REFRESH_TOKEN_EXPIRES_IN)}`;
+  c.header("Set-Cookie", `refresh_token=${refreshTkn}; ${cookieOptions}`);
+
   return c.json({
     success: true,
     tokenType: "Bearer",
     accessToken,
     expiresIn: exp,
-    refreshToken: refreshTkn,
-    refreshExpiresAt: refreshExpAt.toISOString(),
   });
 });
 
 router.post(
   "/logout",
   requireAuth,
-  zValidator("json", refreshSchema),
   async (c) => {
-    const { refreshToken } = c.req.valid("json");
+    // Get refresh token from cookie
+    const cookieHeader = c.req.header("cookie") || "";
+    const cookies = Object.fromEntries(
+      cookieHeader.split("; ").map((c) => {
+        const [key, ...v] = c.split("=");
+        return [key, v.join("=")];
+      }),
+    );
+    const refreshToken = cookies["refresh_token"];
 
-    await db
-      .delete(refreshTokens as any)
-      .where(eq(refreshTokens.token, refreshToken));
+    if (refreshToken) {
+      await db
+        .delete(refreshTokens as any)
+        .where(eq(refreshTokens.token, refreshToken));
+    }
+
+    // Clear refresh token cookie
+    c.header("Set-Cookie", "refresh_token=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0");
 
     return c.json({
       success: true,
-      message: "Logout sukses, hapus token dari client ya",
+      message: "Logout sukses",
     });
   },
 );
@@ -287,7 +327,10 @@ router.get("/profile", requireAuth, async (c) => {
     delete user.password;
   }
 
-  return c.json({ success: true, data: user });
+  // Sanitize user data to prevent XSS
+  const sanitizedUser = sanitizeUserProfile(user);
+
+  return c.json({ success: true, data: sanitizedUser });
 });
 
 router.put(
@@ -344,7 +387,10 @@ router.put(
       delete user.password;
     }
 
-    return c.json({ data: user });
+    // Sanitize user data to prevent XSS
+    const sanitizedUser = sanitizeUserProfile(user);
+
+    return c.json({ data: sanitizedUser });
   },
 );
 
@@ -401,7 +447,7 @@ router.post("/refresh", zValidator("json", refreshSchema), async (c) => {
   const newRefreshToken = generateRefreshToken();
   const newRefreshExpAt = addSeconds(
     new Date(),
-    parseExpiry(REFRESH_TOKEN_EXPIRES_IN),
+    parseExpiry(JWT_REFRESH_TOKEN_EXPIRES_IN),
   );
 
   await db
@@ -415,19 +461,21 @@ router.post("/refresh", zValidator("json", refreshSchema), async (c) => {
     expiresAt: newRefreshExpAt,
   });
 
+  // Set new refresh token as httpOnly cookie
+  const cookieOptions = `HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${parseExpiry(JWT_REFRESH_TOKEN_EXPIRES_IN)}`;
+  c.header("Set-Cookie", `refresh_token=${newRefreshToken}; ${cookieOptions}`);
+
   return c.json({
     success: true,
     tokenType: "Bearer",
     accessToken,
     expiresIn: exp,
-    refreshToken: newRefreshToken,
-    refreshExpiresAt: newRefreshExpAt.toISOString(),
   });
 });
 
 router.post("/forgot-password", zValidator("json", forgotSchema), async (c) => {
   const { identifier } = c.req.valid("json");
-  const { column, value } = resolveIdentifierWhere(identifier);
+  const { column, value } = resolveUserIdentifierWhere(identifier);
 
   const user = await db.query.users.findFirst({
     where: eq(column, value),
@@ -458,6 +506,101 @@ router.post("/forgot-password", zValidator("json", forgotSchema), async (c) => {
     resetToken: token,
     expiresAt,
   });
+});
+
+/**
+ * GET /api/auth/google
+ * Redirect ke Google OAuth consent screen untuk internal users
+ */
+router.get("/auth/google", (c) => {
+  const { url: googleAuthUrl, stateCookie } = getGoogleAuthUrl("admin");
+
+  c.header("Set-Cookie", stateCookie);
+  return c.redirect(googleAuthUrl);
+});
+
+/**
+ * GET /api/auth/google/callback
+ * Handle callback dari Google OAuth untuk internal users
+ */
+router.get("/auth/google/callback", async (c) => {
+  const code = c.req.query("code");
+  const state = c.req.query("state");
+  const error = c.req.query("error");
+  const cookieHeader = c.req.header("cookie") || "";
+
+  // Use shared OAuth handler
+  const oauthResult = await handleGoogleOAuthCallback({
+    userType: "admin",
+    code,
+    state,
+    error,
+    cookieHeader,
+  });
+
+  if (!oauthResult.success || !oauthResult.user) {
+    return c.redirect(oauthResult.errorRedirect || `${process.env.FRONTEND_URL}/admin/login?error=oauth_failed`);
+  }
+
+  const { id: googleId, email, name, picture } = oauthResult.user;
+
+  // Cek apakah user sudah ada berdasarkan email
+  const existingUser = await db.query.users.findFirst({
+    where: eq(users.email, cleanEmail(email)),
+  });
+
+  // Tolak jika email tidak ditemukan di database
+  if (!existingUser) {
+    return c.redirect(
+      `${process.env.FRONTEND_URL}/admin/login?error=email_not_registered`,
+    );
+  }
+
+  // Update googleId jika belum ada
+  if (!existingUser.googleId) {
+    await db
+      .update(users as any)
+      .set({ googleId })
+      .where(eq(users.id, existingUser.id));
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  const exp = now + parseExpiry(JWT_EXPIRES_IN);
+  const rol = await role(existingUser.id);
+
+  const accessTokenJwt = await sign(
+    {
+      sub: String(existingUser.id),
+      typ: TYPE_ADMIN,
+      iat: now,
+      exp,
+      rol,
+    },
+    JWT_SECRET,
+  );
+
+  // create refresh token and persist to DB
+  const refreshTkn = generateRefreshToken();
+  const refreshExpAt = addSeconds(
+    new Date(),
+    parseExpiry(JWT_REFRESH_TOKEN_EXPIRES_IN),
+  );
+  await db.insert(refreshTokens as any).values({
+    userId: existingUser.id,
+    token: refreshTkn,
+    expiresAt: refreshExpAt,
+  });
+
+  // Set refresh token as httpOnly cookie
+  const cookieOptions = `HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${parseExpiry(JWT_REFRESH_TOKEN_EXPIRES_IN)}`;
+  c.header("Set-Cookie", `refresh_token=${refreshTkn}; ${cookieOptions}`);
+
+  // Redirect ke frontend dengan access token di query params
+  const redirectUrl = new URL(`${process.env.FRONTEND_URL}/admin/login/callback`);
+  redirectUrl.searchParams.set("token", accessTokenJwt);
+  redirectUrl.searchParams.set("expires_in", exp.toString());
+
+  return c.redirect(redirectUrl.toString());
 });
 
 export default router;

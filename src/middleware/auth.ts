@@ -7,6 +7,7 @@ config();
 
 export const JWT_SECRET = process.env.JWT_SECRET ?? "super-secret-dev-key";
 export const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN ?? "1h";
+export const JWT_REFRESH_TOKEN_EXPIRES_IN = process.env.JWT_REFRESH_TOKEN_EXPIRES_IN ?? "7d";
 
 export const requireAuth = jwt({
   secret: JWT_SECRET,

@@ -9,89 +9,80 @@ import { jwt } from "hono/jwt";
 import { db } from "../db/client";
 import { customers, customerProfiles, customerRefreshTokens } from "../db/schema";
 import { cleanEmail, cleanPhone } from "../utils/normalizers";
+import {
+  parseExpiry,
+  generateRefreshToken,
+  addSeconds,
+  resolveCustomerIdentifierWhere,
+} from "../utils/auth/shared";
 import { verifyPassword } from "../utils/security";
+import { sanitizeUserProfile } from "../utils/security/xss";
 import { TYPE_CUSTOMER } from "../constants/auth";
 import { createCustomerSession } from "../utils/auth/customerAuth";
+import {
+  getGoogleAuthUrl,
+  handleGoogleOAuthCallback,
+} from "../utils/auth/googleOAuth";
+import { JWT_SECRET, JWT_EXPIRES_IN, JWT_REFRESH_TOKEN_EXPIRES_IN } from "../middleware/auth";
+import { rateLimit } from "../middleware/rateLimit";
+import {
+  checkLockout,
+  recordFailedAttempt,
+  recordSuccessfulAttempt,
+} from "../utils/security/accountLockout";
+import {
+  logLoginSuccess,
+  logLoginFailed,
+  logAccountLocked,
+  logLogout,
+  logTokenRefresh,
+  logOAuthSuccess,
+  logOAuthFailed,
+} from "../utils/security/securityLogger";
 
 const router = new Hono();
 
-// Google OAuth configuration
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "";
-const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "";
-const GOOGLE_REDIRECT_URI =
-  process.env.GOOGLE_REDIRECT_URI ||
-  "http://localhost:3006/api/public/auth/google/callback";
-const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:2026";
-
 const loginSchema = z.object({
   identifier: z.string().min(3),
-  password: z.string().min(8),
+  password: z.string().min(1, "Password wajib diisi"),
 });
-
-const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
-const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "1h";
-const REFRESH_TOKEN_EXPIRES_IN = process.env.REFRESH_TOKEN_EXPIRES_IN ?? "7d";
 
 // Customer authentication middleware
 const requireCustomerAuth = jwt({
   secret: JWT_SECRET,
 });
 
-const parseExpiry = (value: string | undefined): number => {
-  if (!value) return 3600;
-  const match = value.match(/^(\d+)([smhd])$/i);
-  if (!match) return Number(value) || 3600;
-  const amount = Number(match[1]);
-  const unit = match[2].toLowerCase();
-  const unitMap: Record<string, number> = {
-    s: 1,
-    m: 60,
-    h: 3600,
-    d: 86400,
-  };
-  return amount * (unitMap[unit] ?? 3600);
-};
-
-const resolveIdentifierWhere = (identifier: string) => {
-  // Cek apakah identifier adalah email
-  if (identifier.includes("@")) {
-    return {
-      column: customers.email,
-      value: cleanEmail(identifier),
-    };
-  }
-
-  // Cek apakah identifier adalah phone
-  const phoneCandidate = identifier.replace(/[\s-]/g, "");
-  if (/^\+?\d+$/.test(phoneCandidate)) {
-    return {
-      column: customers.phone,
-      value: cleanPhone(identifier),
-    };
-  }
-
-  // Fallback ke username
-  return {
-    column: customers.username,
-    value: identifier.trim(),
-  };
-};
-
-const generateRefreshToken = () => randomBytes(48).toString("hex");
-
-const addSeconds = (date: Date, seconds: number) => {
-  return new Date(date.getTime() + seconds * 1000);
-};
 
 /**
  * POST /api/public/login
  * Endpoint untuk login customer (public)
  */
-router.post("/login", zValidator("json", loginSchema), async (c) => {
+router.post(
+  "/login",
+  rateLimit({ windowMs: 15 * 60 * 1000, maxRequests: 5 }), // 5 requests per 15 minutes
+  zValidator("json", loginSchema),
+  async (c) => {
   const { identifier, password } = c.req.valid("json");
-  const { column, value } = resolveIdentifierWhere(identifier);
+  const { column, value } = resolveCustomerIdentifierWhere(identifier);
 
-  console.log("Customer login attempt:", { identifier });
+  // Get IP address for logging
+  const ipAddress = c.req.header('x-forwarded-for')?.split(',')[0] ||
+                   c.req.header('x-real-ip') ||
+                   'unknown';
+  const userAgent = c.req.header('user-agent');
+
+  // Check account lockout
+  const lockoutStatus = await checkLockout(identifier);
+  if (lockoutStatus.isLocked) {
+    logAccountLocked(identifier, 5, lockoutStatus.lockRemainingTime, ipAddress);
+    return c.json(
+      {
+        success: false,
+        message: `Akun terkunci sementara. Silakan coba lagi dalam ${Math.ceil(lockoutStatus.lockRemainingTime / 60000)} menit.`,
+      },
+      423,
+    );
+  }
 
   // Cari customer berdasarkan identifier
   const rows = await db
@@ -107,6 +98,8 @@ router.post("/login", zValidator("json", loginSchema), async (c) => {
     : null;
 
   if (!currentCustomer) {
+    await recordFailedAttempt(identifier);
+    logLoginFailed(identifier, 'Customer not found', ipAddress, userAgent);
     return c.json(
       { success: false, message: "Email/nomor telepon atau password salah" },
       401,
@@ -117,6 +110,8 @@ router.post("/login", zValidator("json", loginSchema), async (c) => {
 
   if (!bypassPassword || password !== bypassPassword) {
     if (!currentCustomer.password) {
+      await recordFailedAttempt(identifier);
+      logLoginFailed(identifier, 'No password set', ipAddress, userAgent);
       return c.json(
         { success: false, message: "Akun ini tidak memiliki password" },
         401,
@@ -125,6 +120,20 @@ router.post("/login", zValidator("json", loginSchema), async (c) => {
 
     const isMatch = await verifyPassword(password, currentCustomer.password);
     if (!isMatch) {
+      const failedResult = await recordFailedAttempt(identifier);
+      logLoginFailed(identifier, 'Invalid password', ipAddress, userAgent);
+
+      if (failedResult.isLocked) {
+        logAccountLocked(identifier, 5, failedResult.lockRemainingTime, ipAddress);
+        return c.json(
+          {
+            success: false,
+            message: `Terlalu banyak percobaan gagal. Akun terkunci sementara. Silakan coba lagi dalam ${Math.ceil(failedResult.lockRemainingTime / 60000)} menit.`,
+          },
+          423,
+        );
+      }
+
       return c.json(
         { success: false, message: "Email/nomor telepon atau password salah" },
         401,
@@ -132,10 +141,24 @@ router.post("/login", zValidator("json", loginSchema), async (c) => {
     }
   }
 
+  // Successful login - reset lockout and log
+  await recordSuccessfulAttempt(identifier);
+  logLoginSuccess(undefined, currentCustomer.id, identifier, ipAddress, userAgent);
+
   // Generate customer tokens using helper
   const loginTokenResponse = await createCustomerSession(currentCustomer);
 
-  return c.json(loginTokenResponse);
+  // Set refresh token as httpOnly cookie
+  c.header("Set-Cookie", loginTokenResponse.setCookieHeader);
+
+  return c.json({
+    success: loginTokenResponse.success,
+    message: loginTokenResponse.message,
+    tokenType: loginTokenResponse.tokenType,
+    accessToken: loginTokenResponse.accessToken,
+    expiresIn: loginTokenResponse.expiresIn,
+    customer: loginTokenResponse.customer,
+  });
 });
 
 /**
@@ -143,26 +166,9 @@ router.post("/login", zValidator("json", loginSchema), async (c) => {
  * Redirect ke Google OAuth consent screen
  */
 router.get("/auth/google", (c) => {
-  const state = randomBytes(16).toString("hex");
+  const { url: googleAuthUrl, stateCookie } = getGoogleAuthUrl("customer");
 
-  // Simpan state di cookie untuk validasi nanti
-  c.header(
-    "Set-Cookie",
-    `oauth_state=${state}; HttpOnly; Path=/; Max-Age=600; SameSite=Lax`,
-  );
-
-  const params = new URLSearchParams({
-    client_id: GOOGLE_CLIENT_ID,
-    redirect_uri: GOOGLE_REDIRECT_URI,
-    response_type: "code",
-    scope: "openid email profile",
-    state,
-    access_type: "offline",
-    prompt: "consent",
-  });
-
-  const googleAuthUrl = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
-
+  c.header("Set-Cookie", stateCookie);
   return c.redirect(googleAuthUrl);
 });
 
@@ -174,162 +180,74 @@ router.get("/auth/google/callback", async (c) => {
   const code = c.req.query("code");
   const state = c.req.query("state");
   const error = c.req.query("error");
-
-  // Cek apakah ada error dari Google
-  if (error) {
-    return c.redirect(
-      `${FRONTEND_URL}/login?error=${encodeURIComponent(error)}`,
-    );
-  }
-
-  if (!code || !state) {
-    return c.redirect(`${FRONTEND_URL}/login?error=missing_code_or_state`);
-  }
-
-  // Validasi state (ambil dari cookie)
   const cookieHeader = c.req.header("cookie") || "";
-  const cookies = Object.fromEntries(
-    cookieHeader.split("; ").map((c) => {
-      const [key, ...v] = c.split("=");
-      return [key, v.join("=")];
-    }),
-  );
 
-  const savedState = cookies["oauth_state"];
-  if (savedState !== state) {
-    return c.redirect(`${FRONTEND_URL}/login?error=invalid_state`);
+  // Use shared OAuth handler
+  const oauthResult = await handleGoogleOAuthCallback({
+    userType: "customer",
+    code,
+    state,
+    error,
+    cookieHeader,
+  });
+
+  if (!oauthResult.success || !oauthResult.user) {
+    return c.redirect(oauthResult.errorRedirect || `${process.env.FRONTEND_URL}/login?error=oauth_failed`);
   }
 
-  try {
-    // Exchange code untuk access token
-    const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: new URLSearchParams({
-        code,
-        client_id: GOOGLE_CLIENT_ID,
-        client_secret: GOOGLE_CLIENT_SECRET,
-        redirect_uri: GOOGLE_REDIRECT_URI,
-        grant_type: "authorization_code",
-      }),
-    });
+  const { id: googleId, email, name, picture } = oauthResult.user;
 
-    if (!tokenResponse.ok) {
-      const errorData = await tokenResponse.text();
-      console.error("Token exchange failed:", errorData);
-      return c.redirect(`${FRONTEND_URL}/login?error=token_exchange_failed`);
-    }
+  // Cek apakah customer sudah ada berdasarkan googleId atau email
+  const existingRows = await db
+    .select({ customer: customers, profile: customerProfiles })
+    .from(customers)
+    .leftJoin(customerProfiles, eq(customerProfiles.customerId, customers.id))
+    .where(
+      or(
+        eq(customers.googleId, googleId),
+        eq(customers.email, cleanEmail(email)),
+      ),
+    )
+    .limit(1);
 
-    const tokenData = await tokenResponse.json();
-    const accessToken = tokenData.access_token;
-
-    // Ambil user info dari Google
-    const userInfoResponse = await fetch(
-      "https://www.googleapis.com/oauth2/v2/userinfo",
-      {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-      },
-    );
-
-    if (!userInfoResponse.ok) {
-      return c.redirect(`${FRONTEND_URL}/login?error=failed_to_get_user_info`);
-    }
-
-    const googleUser = await userInfoResponse.json();
-    const { id: googleId, email, name, picture } = googleUser;
-
-    // Cek apakah customer sudah ada berdasarkan googleId atau email
-    const existingRows = await db
-      .select({ customer: customers, profile: customerProfiles })
-      .from(customers)
-      .leftJoin(customerProfiles, eq(customerProfiles.customerId, customers.id))
-      .where(
-        or(
-          eq(customers.googleId, googleId),
-          eq(customers.email, cleanEmail(email)),
-        ),
-      )
-      .limit(1);
-
-    const existingRow = existingRows[0];
-    let existingCustomer = existingRow
-      ? {
-          ...(existingRow as any).customer,
-          profile: (existingRow as any).profile ?? null,
-        }
-      : null;
-
-    let customerId: number;
-
-    if (existingCustomer) {
-      // Update googleId jika belum ada
-      if (!existingCustomer.googleId) {
-        await db
-          .update(customers as any)
-          .set({ googleId })
-          .where(eq(customers.id, existingCustomer.id));
+  const existingRow = existingRows[0];
+  let existingCustomer = existingRow
+    ? {
+        ...(existingRow as any).customer,
+        profile: (existingRow as any).profile ?? null,
       }
-      customerId = existingCustomer.id;
-    } else {
-      // Buat customer baru
-      const [insertResult] = await db.insert(customers).values({
-        email: cleanEmail(email),
-        googleId,
-        username: null,
-        phone: null,
-        fbid: null,
-        password: null,
-        dataJson: { picture },
-      });
+    : null;
 
-      customerId = Number(insertResult.insertId);
+  let customerId: number;
 
-      // Buat profile
-      await db.insert(customerProfiles).values({
-        customerId,
-        name,
-        email,
-        phone: null,
-      });
-
-      // Fetch customer yang baru dibuat
-      const newRows = await db
-        .select({ customer: customers, profile: customerProfiles })
-        .from(customers)
-        .leftJoin(
-          customerProfiles,
-          eq(customerProfiles.customerId, customers.id),
-        )
-        .where(eq(customers.id, customerId))
-        .limit(1);
-
-      const newRow = newRows[0];
-      existingCustomer = newRow
-        ? {
-            ...(newRow as any).customer,
-            profile: (newRow as any).profile ?? null,
-          }
-        : null;
-    }
-
-    // Generate customer tokens using helper
-    const loginTokenResponse = await createCustomerSession(existingCustomer);
-
-    // Redirect ke frontend dengan token di query params
-    const redirectUrl = new URL(`${FRONTEND_URL}/login/callback`);
-    redirectUrl.searchParams.set("token", loginTokenResponse.accessToken);
-    redirectUrl.searchParams.set("refresh_token", loginTokenResponse.refreshToken);
-    redirectUrl.searchParams.set("expires_in", loginTokenResponse.expiresIn.toString());
-
-    return c.redirect(redirectUrl.toString());
-  } catch (error: any) {
-    console.error("Google OAuth error:", error);
-    return c.redirect(`${FRONTEND_URL}/login?error=oauth_failed`);
+  if (!existingCustomer) {
+    // Tolak jika email tidak ditemukan di database
+    return c.redirect(
+      `${process.env.FRONTEND_URL}/login?error=email_not_registered`,
+    );
   }
+
+  // Update googleId jika belum ada
+  if (!existingCustomer.googleId) {
+    await db
+      .update(customers as any)
+      .set({ googleId })
+      .where(eq(customers.id, existingCustomer.id));
+  }
+  customerId = existingCustomer.id;
+
+  // Generate customer tokens using helper
+  const loginTokenResponse = await createCustomerSession(existingCustomer);
+
+  // Set refresh token as httpOnly cookie
+  c.header("Set-Cookie", loginTokenResponse.setCookieHeader);
+
+  // Redirect ke frontend dengan access token di query params
+  const redirectUrl = new URL(`${process.env.FRONTEND_URL}/login/callback`);
+  redirectUrl.searchParams.set("token", loginTokenResponse.accessToken);
+  redirectUrl.searchParams.set("expires_in", loginTokenResponse.expiresIn.toString());
+
+  return c.redirect(redirectUrl.toString());
 });
 
 /**
@@ -357,18 +275,21 @@ router.get("/profile", requireCustomerAuth, async (c) => {
       return c.json({ success: false, message: "Customer tidak ditemukan" }, 404);
     }
 
+    // Sanitize customer data to prevent XSS
+    const sanitizedCustomer = sanitizeUserProfile({
+      id: customer.id,
+      email: customer.email,
+      username: customer.username,
+      phone: customer.phone,
+      profile: customer.profile,
+      createdAt: customer.createdAt,
+      updatedAt: customer.updatedAt,
+    });
+
     // Return customer data without sensitive information
     return c.json({
       success: true,
-      data: {
-        id: customer.id,
-        email: customer.email,
-        username: customer.username,
-        phone: customer.phone,
-        profile: customer.profile,
-        createdAt: customer.createdAt,
-        updatedAt: customer.updatedAt,
-      },
+      data: sanitizedCustomer,
     });
   } catch (error) {
     console.error("Error fetching customer profile:", error);
@@ -437,7 +358,7 @@ router.post("/refresh", async (c) => {
     const newRefreshToken = generateRefreshToken();
     const newRefreshExpAt = addSeconds(
       new Date(),
-      parseExpiry(REFRESH_TOKEN_EXPIRES_IN),
+      parseExpiry(JWT_REFRESH_TOKEN_EXPIRES_IN),
     );
 
     await db
@@ -451,19 +372,51 @@ router.post("/refresh", async (c) => {
       expiresAt: newRefreshExpAt,
     });
 
+    // Set new refresh token as httpOnly cookie
+    const cookieOptions = `HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${parseExpiry(JWT_REFRESH_TOKEN_EXPIRES_IN)}`;
+    c.header("Set-Cookie", `refresh_token=${newRefreshToken}; ${cookieOptions}`);
+
     return c.json({
       success: true,
       message: "Token refreshed successfully",
       accessToken: jwtToken,
       tokenType: "Bearer",
       expiresIn: exp,
-      refreshToken: newRefreshToken,
-      refreshExpiresAt: newRefreshExpAt.toISOString(),
     });
   } catch (error) {
     console.error("Error refreshing customer token:", error);
     return c.json({ success: false, message: "Failed to refresh token" }, 500);
   }
+});
+
+/**
+ * POST /api/public/logout
+ * Logout customer - revoke refresh token and clear cookie
+ */
+router.post("/logout", requireCustomerAuth, async (c) => {
+  // Get refresh token from cookie
+  const cookieHeader = c.req.header("cookie") || "";
+  const cookies = Object.fromEntries(
+    cookieHeader.split("; ").map((c) => {
+      const [key, ...v] = c.split("=");
+      return [key, v.join("=")];
+    }),
+  );
+  const refreshToken = cookies["refresh_token"];
+
+  if (refreshToken) {
+    await db
+      .delete(customerRefreshTokens)
+      .where(eq(customerRefreshTokens.token, refreshToken));
+  }
+
+  // Clear refresh token cookie
+  c.header("Set-Cookie", "refresh_token=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0");
+
+  return c.json({
+    success: true,
+    message: "Logout sukses",
+  });
 });
 
 export default router;
