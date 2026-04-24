@@ -40,17 +40,26 @@ export function addSeconds(date: Date, seconds: number): Date {
  */
 export function resolveUserIdentifierWhere(identifier: string) {
     if (identifier.includes("@")) {
+        // Match cleanEmail logic: only remove dots from local part, not domain
+        const trimmed = identifier.trim().toLowerCase();
+        const [local, domain] = trimmed.split('@');
+        const normalizedLocal = local.replace(/\./g, '');
         return {
             column: users.email,
-            value: identifier.trim().toLowerCase().replace(/\./g, ""),
+            value: `${normalizedLocal}@${domain}`,
         };
     }
 
     const phoneCandidate = identifier.replace(/[\s-]/g, "");
     if (/^\+?\d+$/.test(phoneCandidate)) {
+        // Strip + and replace leading 0 with 62 to match cleanPhone normalization
+        let normalizedPhone = phoneCandidate.replace(/^\+/, "");
+        if (normalizedPhone.startsWith("0")) {
+            normalizedPhone = "62" + normalizedPhone.slice(1);
+        }
         return {
             column: users.phone,
-            value: phoneCandidate.replace(/^0/, "62"),
+            value: normalizedPhone,
         };
     }
 
@@ -66,17 +75,26 @@ export function resolveUserIdentifierWhere(identifier: string) {
  */
 export function resolveCustomerIdentifierWhere(identifier: string) {
     if (identifier.includes("@")) {
+        // Match cleanEmail logic: only remove dots from local part, not domain
+        const trimmed = identifier.trim().toLowerCase();
+        const [local, domain] = trimmed.split('@');
+        const normalizedLocal = local.replace(/\./g, '');
         return {
             column: customers.email,
-            value: identifier.trim().toLowerCase().replace(/\./g, ""),
+            value: `${normalizedLocal}@${domain}`,
         };
     }
 
     const phoneCandidate = identifier.replace(/[\s-]/g, "");
     if (/^\+?\d+$/.test(phoneCandidate)) {
+        // Strip + and replace leading 0 with 62 to match cleanPhone normalization
+        let normalizedPhone = phoneCandidate.replace(/^\+/, "");
+        if (normalizedPhone.startsWith("0")) {
+            normalizedPhone = "62" + normalizedPhone.slice(1);
+        }
         return {
             column: customers.phone,
-            value: phoneCandidate.replace(/^0/, "62"),
+            value: normalizedPhone,
         };
     }
 

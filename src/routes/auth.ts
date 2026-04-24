@@ -10,7 +10,7 @@ import {cleanEmail, cleanPhone} from "../utils/normalizers";
 import {parseExpiry, generateRefreshToken, addSeconds, resolveUserIdentifierWhere} from "../utils/auth/shared";
 import {generateAccessToken, createRefreshToken, setRefreshTokenCookie, clearRefreshTokenCookie, getUserWithProfile} from "../utils/auth/tokenHelpers";
 import {generateResetToken, verifyPassword} from "../utils/security";
-import {JWT_EXPIRES_IN, JWT_SECRET, JWT_REFRESH_TOKEN_EXPIRES_IN, requireAuth, getAuthUserId} from "../middleware/auth";
+import {JWT_EXPIRES_IN, JWT_SECRET, JWT_REFRESH_TOKEN_EXPIRES_IN, requireAuth, requireAuthWithFallback, getAuthUserId} from "../middleware/auth";
 import {TYPE_ADMIN, TYPE_CUSTOMER} from "../constants/auth";
 import type {JwtPayload} from "../middleware/auth";
 import {role} from "../utils/auth/role";
@@ -138,7 +138,10 @@ router.post("/test-token", zValidator("json", testTokenSchema), async (c) => {
 
 router.post(
     "/login",
-    rateLimit({windowMs: 15 * 60 * 1000, maxRequests: 5}), // 5 requests per 15 minutes
+    rateLimit({
+        windowMs: 15 * 60 * 1000,
+        maxRequests: Number(process.env.RATE_LIMIT_MAX_REQUESTS) || 5, // Use env var or default to 5 for prod
+    }), // 5 requests per 15 minutes (prod), higher for dev
     zValidator("json", loginSchema),
     async (c) => {
         const {identifier, password} = c.req.valid("json");
@@ -245,8 +248,20 @@ router.post("/logout", requireAuth, async (c) => {
     });
 });
 
-router.post("/refresh", zValidator("json", refreshSchema), async (c) => {
-    const {refreshToken} = c.req.valid("json");
+router.post("/refresh", async (c) => {
+    // Get refresh token from cookie
+    const cookieHeader = c.req.header("cookie") || "";
+    const cookies = Object.fromEntries(
+        cookieHeader.split("; ").map((c) => {
+            const [key, ...v] = c.split("=");
+            return [key, v.join("=")];
+        }),
+    );
+    const refreshToken = cookies["refresh_token"];
+
+    if (!refreshToken) {
+        return c.json({success: false, message: "Refresh token required"}, 400);
+    }
 
     const existing = await db.query.refreshTokens.findFirst({
         where: eq(refreshTokens.token, refreshToken),
@@ -297,7 +312,7 @@ router.post("/refresh", zValidator("json", refreshSchema), async (c) => {
 // PROFILE MANAGEMENT
 // ============================================================================
 
-router.get("/profile", requireAuth, async (c) => {
+router.get("/profile", requireAuthWithFallback, async (c) => {
     const payload = c.get("jwtPayload") as JwtPayload;
     const userId = getAuthUserId(payload);
 

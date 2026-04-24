@@ -2,6 +2,7 @@ import { jwt } from "hono/jwt";
 import { verify } from "hono/jwt";
 import { config } from "dotenv";
 import { TYPE_CUSTOMER } from "../constants/auth";
+import type { Context, Next } from "hono";
 
 config();
 
@@ -12,6 +13,37 @@ export const JWT_REFRESH_TOKEN_EXPIRES_IN = process.env.JWT_REFRESH_TOKEN_EXPIRE
 export const requireAuth = jwt({
   secret: JWT_SECRET,
 });
+
+// Custom middleware to handle missing/invalid tokens gracefully
+export const requireAuthWithFallback = async (c: Context, next: Next) => {
+  const authHeader = c.req.header("Authorization");
+  
+  if (!authHeader) {
+    return c.json({
+      success: false,
+      message: "Authorization header required"
+    }, 401);
+  }
+  
+  if (!authHeader.startsWith("Bearer ")) {
+    return c.json({
+      success: false,
+      message: "Invalid authorization header format. Expected: Bearer <token>"
+    }, 401);
+  }
+  
+  try {
+    await requireAuth(c, next);
+  } catch (error: any) {
+    if (error.name === 'JWTError' || error.message?.includes('jwt')) {
+      return c.json({
+        success: false,
+        message: "Invalid or expired token"
+      }, 401);
+    }
+    throw error;
+  }
+};
 
 export type JwtPayload = {
   sub: string;

@@ -53,7 +53,7 @@ export async function createCustomerSession(customer: any): Promise<CustomerLogi
   });
 
   // Set refresh token as httpOnly cookie
-  const cookieOptions = `HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${parseExpiry(JWT_REFRESH_TOKEN_EXPIRES_IN)}`;
+  const cookieOptions = `HttpOnly; SameSite=Strict; Path=/; Max-Age=${parseExpiry(JWT_REFRESH_TOKEN_EXPIRES_IN)}`;
   const setCookieHeader = `refresh_token=${refreshTkn}; ${cookieOptions}`;
 
   return {

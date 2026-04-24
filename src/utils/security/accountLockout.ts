@@ -12,7 +12,7 @@ interface LockoutOptions {
 }
 
 const DEFAULT_OPTIONS: LockoutOptions = {
-    maxAttempts: 5,
+    maxAttempts: parseInt(process.env.ACCOUNT_LOCKOUT_MAX_ATTEMPTS || '5'),
     lockDurationMs: 15 * 60 * 1000, // 15 minutes
     resetDurationMs: 15 * 60 * 1000, // 15 minutes
 };

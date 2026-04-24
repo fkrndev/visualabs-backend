@@ -59,7 +59,7 @@ const requireCustomerAuth = jwt({
  */
 router.post(
   "/login",
-  rateLimit({ windowMs: 15 * 60 * 1000, maxRequests: 5 }), // 5 requests per 15 minutes
+  rateLimit({ windowMs: 15 * 60 * 1000, maxRequests: Number(process.env.RATE_LIMIT_MAX_REQUESTS) || 5 }), // Use env var or default to 5 for prod
   zValidator("json", loginSchema),
   async (c) => {
   const { identifier, password } = c.req.valid("json");
@@ -302,7 +302,15 @@ router.get("/profile", requireCustomerAuth, async (c) => {
  * Refresh customer access token
  */
 router.post("/refresh", async (c) => {
-  const { refreshToken } = await c.req.json();
+  // Get refresh token from cookie
+  const cookieHeader = c.req.header("cookie") || "";
+  const cookies = Object.fromEntries(
+    cookieHeader.split("; ").map((c) => {
+      const [key, ...v] = c.split("=");
+      return [key, v.join("=")];
+    }),
+  );
+  const refreshToken = cookies["refresh_token"];
 
   if (!refreshToken) {
     return c.json({ success: false, message: "Refresh token required" }, 400);
@@ -373,7 +381,7 @@ router.post("/refresh", async (c) => {
     });
 
     // Set new refresh token as httpOnly cookie
-    const cookieOptions = `HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${parseExpiry(JWT_REFRESH_TOKEN_EXPIRES_IN)}`;
+    const cookieOptions = `HttpOnly; SameSite=Strict; Path=/; Max-Age=${parseExpiry(JWT_REFRESH_TOKEN_EXPIRES_IN)}`;
     c.header("Set-Cookie", `refresh_token=${newRefreshToken}; ${cookieOptions}`);
 
     return c.json({
