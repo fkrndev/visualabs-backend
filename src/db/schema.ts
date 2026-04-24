@@ -207,6 +207,11 @@ export const chromeProfiles = mysqlTable(
     customerId: int("customer_id")
       .references(() => customers.id, { onDelete: "set null" }),
     name: varchar("name", { length: 191 }).notNull(),
+    userAgent: text("user_agent"),
+    proxy: varchar("proxy", { length: 255 }),
+    cookies: json("cookies"),
+    fingerprint: json("fingerprint"),
+    status: int("status").default(0).notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
   },

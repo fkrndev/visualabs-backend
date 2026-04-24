@@ -22,12 +22,22 @@ const paginationQuery = z.object({
 const chromeProfilePayload = z.object({
   name: z.string().min(1),
   customerId: z.coerce.number().int().optional(),
-  browserUuid: z.string().optional(), // jika browser sudah punya uuid
+  browserUuid: z.string().optional(),
+  userAgent: z.string().optional(),
+  proxy: z.string().max(255).optional(),
+  cookies: z.any().optional(),
+  fingerprint: z.any().optional(),
+  status: z.coerce.number().int().default(0),
 });
 
 const updateChromeProfilePayload = z.object({
   name: z.string().min(1).optional(),
   customerId: z.coerce.number().int().nullable().optional(),
+  userAgent: z.string().nullable().optional(),
+  proxy: z.string().max(255).nullable().optional(),
+  cookies: z.any().optional(),
+  fingerprint: z.any().optional(),
+  status: z.coerce.number().int().optional(),
 });
 
 function buildSelectQuery() {
@@ -156,6 +166,11 @@ router.post('/', zValidator('json', chromeProfilePayload), async (c) => {
       userId,
       customerId: payload.customerId ?? null,
       name: payload.name,
+      userAgent: payload.userAgent ?? null,
+      proxy: payload.proxy ?? null,
+      cookies: payload.cookies ?? null,
+      fingerprint: payload.fingerprint ?? null,
+      status: payload.status ?? 0,
     });
 
     const insertId = Number(insertResult.insertId);
@@ -180,6 +195,11 @@ router.put('/:id', zValidator('json', updateChromeProfilePayload), async (c) => 
   const sets: Partial<typeof chromeProfiles.$inferInsert> = {};
   if (payload.name !== undefined) sets.name = payload.name;
   if (payload.customerId !== undefined) sets.customerId = payload.customerId;
+  if (payload.userAgent !== undefined) sets.userAgent = payload.userAgent;
+  if (payload.proxy !== undefined) sets.proxy = payload.proxy;
+  if (payload.cookies !== undefined) sets.cookies = payload.cookies;
+  if (payload.fingerprint !== undefined) sets.fingerprint = payload.fingerprint;
+  if (payload.status !== undefined) sets.status = payload.status;
 
   if (!Object.keys(sets).length) {
     return c.json({ success: false, message: 'Tidak ada data yang diupdate' }, 400);

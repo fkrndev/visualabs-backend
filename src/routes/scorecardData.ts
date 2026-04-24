@@ -13,6 +13,8 @@ const paginationQuery = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(20),
   scorecardId: z.coerce.number().int().optional(),
+  subscriptionId: z.coerce.number().int().optional(),
+  pic: z.coerce.number().int().optional(),
   year: z.coerce.number().int().optional(),
   month: z.coerce.number().int().optional(),
   week: z.coerce.number().int().optional(),
@@ -301,6 +303,8 @@ router.get('/', zValidator('query', paginationQuery), async (c) => {
     page,
     limit,
     scorecardId,
+    subscriptionId,
+    pic,
     year,
     month,
     week,
@@ -313,6 +317,8 @@ router.get('/', zValidator('query', paginationQuery), async (c) => {
 
   const filters = [] as any[];
   if (scorecardId !== undefined) filters.push(eq(scorecardData.scorecardId, scorecardId));
+  if (subscriptionId !== undefined) filters.push(eq(scorecards.subscriptionId, subscriptionId));
+  if (pic !== undefined) filters.push(eq(scorecards.pic, pic));
   if (year !== undefined) filters.push(eq(scorecardData.year, year));
   if (month !== undefined) filters.push(eq(scorecardData.month, month));
   if (week !== undefined) filters.push(eq(scorecardData.week, week));
