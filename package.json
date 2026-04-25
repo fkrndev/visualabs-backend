@@ -1,7 +1,10 @@
 {
   "name": "app",
   "scripts": {
-    "dev": "bun run --hot src/index.ts"
+    "dev": "bun run --hot src/index.ts",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@aws-sdk/client-ses": "^3.705.0",
@@ -20,6 +23,8 @@
   },
   "devDependencies": {
     "@types/bun": "^1.2.21",
-    "drizzle-kit": "^0.31.6"
+    "@vitest/coverage-v8": "^4.1.5",
+    "drizzle-kit": "^0.31.6",
+    "vitest": "^4.1.5"
   }
 }
