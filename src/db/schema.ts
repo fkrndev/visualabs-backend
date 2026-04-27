@@ -845,3 +845,59 @@ export const todoRepeatHistoryRelations = relations(todoRepeatHistories, ({ one 
   meeting: one(meetings, { fields: [todoRepeatHistories.meetingId], references: [meetings.id] }),
   ticketIssue: one(ticketIssues, { fields: [todoRepeatHistories.ticketIssueId], references: [ticketIssues.id] }),
 }));
+
+// fb
+
+export const fbAct = mysqlTable(
+  "fb_act",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    customerId: int("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    subscriptionId: int("subscription_id")
+      .notNull()
+      .references(() => subscriptions.id, { onDelete: "cascade" }),
+    tokenId: int("token_id")
+      .references(() => fbToken.id, { onDelete: "set null" }),
+    actId: varchar("act_id", { length: 191 }).notNull(),
+    actName: varchar("act_name", { length: 255 }),
+    name: varchar("name", { length: 255 }),
+    dataJson: json("data_json").$type<JsonRecord>(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+  },
+  (table) => [
+    index("fb_act_customer_idx").on(table.customerId),
+    index("fb_act_subscription_idx").on(table.subscriptionId),
+    index("fb_act_act_id_idx").on(table.actId),
+  ],
+);
+
+export const fbToken = mysqlTable(
+  "fb_token",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    userId: int("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    token: text("token").notNull(),
+    status: tinyint("status").notNull().default(1),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+  },
+  (table) => [
+    index("fb_token_user_idx").on(table.userId),
+    index("fb_token_status_idx").on(table.status),
+  ],
+);
+
+export const fbActRelations = relations(fbAct, ({ one }) => ({
+  customer: one(customers, { fields: [fbAct.customerId], references: [customers.id] }),
+  subscription: one(subscriptions, { fields: [fbAct.subscriptionId], references: [subscriptions.id] }),
+  token: one(fbToken, { fields: [fbAct.tokenId], references: [fbToken.id] }),
+}));
+
+export const fbTokenRelations = relations(fbToken, ({ one }) => ({
+  user: one(users, { fields: [fbToken.userId], references: [users.id] }),
+}));
