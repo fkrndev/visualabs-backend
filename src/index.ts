@@ -24,6 +24,8 @@ import meetingRoutes from "./routes/meetings";
 import scorecardRoutes from "./routes/scorecards";
 import scorecardDataRoutes from "./routes/scorecardData";
 import todoRoutes from "./routes/todos";
+import fbActRoutes from "./routes/fbAct";
+import fbTokenRoutes from "./routes/fbToken";
 import openApiSpec from "./openapi/spec";
 import { role } from "./utils/auth/role";
 // import { readFileSync } from "fs";
@@ -94,6 +96,8 @@ app.route("/meetings", meetingRoutes);
 app.route("/scorecards", scorecardRoutes);
 app.route("/scorecard-data", scorecardDataRoutes);
 app.route("/todos", todoRoutes);
+app.route("/fb-act", fbActRoutes);
+app.route("/fb-token", fbTokenRoutes);
 
 app.notFound((c) => {
   return c.json(
