@@ -8,8 +8,9 @@ import {db} from "../db/client";
 import {profiles, users, refreshTokens, customers} from "../db/schema";
 import {cleanEmail, cleanPhone} from "../utils/normalizers";
 import {parseExpiry, generateRefreshToken, addSeconds, resolveUserIdentifierWhere} from "../utils/auth/shared";
-import {generateAccessToken, createRefreshToken, setRefreshTokenCookie, clearRefreshTokenCookie, getUserWithProfile} from "../utils/auth/tokenHelpers";
+import {getUserWithProfile, generateAccessToken, createRefreshToken, setRefreshTokenCookie, clearRefreshTokenCookie} from "../utils/auth/tokenHelpers";
 import {generateResetToken, verifyPassword} from "../utils/security";
+import {sanitizeUserProfile} from "../utils/security/xss";
 import {JWT_EXPIRES_IN, JWT_SECRET, JWT_REFRESH_TOKEN_EXPIRES_IN, requireAuth, requireAuthWithFallback, getAuthUserId} from "../middleware/auth";
 import {TYPE_ADMIN, TYPE_CUSTOMER} from "../constants/auth";
 import type {JwtPayload} from "../middleware/auth";
@@ -318,7 +319,10 @@ router.get("/profile", requireAuthWithFallback, async (c) => {
 
     const sanitizedUser = await getUserWithProfile(userId);
 
-    return c.json({success: true, data: sanitizedUser});
+    // Sanitize user data to prevent XSS
+    const sanitizedProfile = sanitizeUserProfile(sanitizedUser);
+
+    return c.json({success: true, data: sanitizedProfile});
 });
 
 router.put("/profile", requireAuth, zValidator("json", profileSchema), async (c) => {
@@ -356,7 +360,10 @@ router.put("/profile", requireAuth, zValidator("json", profileSchema), async (c)
 
     const sanitizedUser = await getUserWithProfile(userId);
 
-    return c.json({data: sanitizedUser});
+    // Sanitize user data to prevent XSS
+    const sanitizedProfile = sanitizeUserProfile(sanitizedUser);
+
+    return c.json({data: sanitizedProfile});
 });
 
 // ============================================================================

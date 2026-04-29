@@ -3,6 +3,7 @@ import { verify } from "hono/jwt";
 import { config } from "dotenv";
 import { TYPE_CUSTOMER } from "../constants/auth";
 import type { Context, Next } from "hono";
+import { hasPermission } from "../utils/auth/permissions";
 
 config();
 
@@ -17,21 +18,21 @@ export const requireAuth = jwt({
 // Custom middleware to handle missing/invalid tokens gracefully
 export const requireAuthWithFallback = async (c: Context, next: Next) => {
   const authHeader = c.req.header("Authorization");
-  
+
   if (!authHeader) {
     return c.json({
       success: false,
       message: "Authorization header required"
     }, 401);
   }
-  
+
   if (!authHeader.startsWith("Bearer ")) {
     return c.json({
       success: false,
       message: "Invalid authorization header format. Expected: Bearer <token>"
     }, 401);
   }
-  
+
   try {
     await requireAuth(c, next);
   } catch (error: any) {
@@ -101,4 +102,51 @@ export const extractAuthInfo = async (authHeader?: string): Promise<{
   }
 
   return { userId, role, customerId, isCustomer, isAdmin, jwtPayload };
+};
+
+// Permission middleware
+export const requirePermission = (requiredPermission: string) => {
+  return async (c: Context, next: Next) => {
+    const jwtPayload = c.get('jwtPayload') as JwtPayload;
+    
+    if (!jwtPayload) {
+      return c.json({
+        success: false,
+        message: "Unauthorized: No JWT payload found"
+      }, 401);
+    }
+
+    const userId = Number(jwtPayload.sub);
+    let role: number | null | undefined;
+
+    if (typeof jwtPayload.rol === 'string') {
+      try {
+        role = JSON.parse(jwtPayload.rol);
+      } catch {
+        role = undefined;
+      }
+    } else {
+      role = jwtPayload.rol as number | null | undefined;
+    }
+
+    if (role === null || role === undefined) {
+      return c.json({
+        success: false,
+        message: "Unauthorized: Invalid user role"
+      }, 403);
+    }
+
+    if (!hasPermission(role, requiredPermission)) {
+      return c.json({
+        success: false,
+        message: `Forbidden: Missing required permission: ${requiredPermission}`
+      }, 403);
+    }
+
+    // Store user info in context for use in handlers
+    c.set('userId', userId);
+    c.set('userRole', role);
+
+    await next();
+  };
 };

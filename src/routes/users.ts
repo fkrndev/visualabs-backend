@@ -7,6 +7,16 @@ import { db } from '../db/client';
 import { profiles, users } from '../db/schema';
 import { cleanEmail, cleanPhone } from '../utils/normalizers';
 import { hashPassword } from '../utils/security';
+import { requireAuth } from '../middleware/auth';
+import { requirePermission, PERMISSION } from '../utils/auth/permissions';
+import { rateLimit } from '../middleware/rateLimit';
+import { validateIdParam, getValidatedId } from '../middleware/validation';
+import { logAuditEvent, getClientIp, getUserAgent } from '../utils/audit';
+import { createLogger } from '../utils/logger';
+import { validateUniqueEmail, validateUniqueUsername, validateUniquePhone, fetchEntityWithProfile } from '../utils/db-helpers';
+import { sanitizeUserProfile } from '../utils/security/xss';
+
+const logger = createLogger('UsersRoute');
 
 const router = new Hono();
 
@@ -38,7 +48,7 @@ const updateUserPayload = userPayload.partial().extend({
   password: z.string().min(8).optional(),
 });
 
-router.get('/', zValidator('query', paginationQuery), async (c) => {
+router.get('/', rateLimit({ windowMs: 60000, maxRequests: 100 }), requireAuth, zValidator('query', paginationQuery), async (c) => {
   const {
     page,
     limit,
@@ -54,7 +64,7 @@ router.get('/', zValidator('query', paginationQuery), async (c) => {
 
   const offset = (page - 1) * limit;
 
-  const filters = [] as any[];
+  const filters: SQL[] = [];
   if (q) {
     const value = `%${q}%`;
     filters.push(
@@ -101,41 +111,37 @@ router.get('/', zValidator('query', paginationQuery), async (c) => {
   }
 
   const rows = await query;
-  const items = rows.map((r) => ({ ...(r.user as any), profile: r.profile ?? null }));
+  const items = rows.map((r) => ({ ...r.user, profile: r.profile ?? null }));
+
+  // Sanitize items to prevent XSS
+  const sanitizedItems = items.map(sanitizeUserProfile);
 
   const lastId = items.length ? items[items.length - 1].id ?? null : null;
   const hasNext = items.length === limit;
 
   return c.json({
     success: true,
-    data: items,
+    data: sanitizedItems,
     page: { limit, lastId, hasNext, sortBy: sortKey, sortOrder },
   });
 });
 
-router.get('/:id', async (c) => {
-  const id = Number(c.req.param('id'));
-  if (Number.isNaN(id)) {
-    return c.json({ success: false, message: 'ID tidak valid' }, 400);
-  }
+router.get('/:id', requireAuth, validateIdParam('id'), async (c) => {
+  const id = getValidatedId(c);
 
-  const rows = await db
-    .select({ user: users, profile: profiles })
-    .from(users)
-    .leftJoin(profiles, eq(profiles.userId, users.id))
-    .where(eq(users.id, id))
-    .limit(1);
-  const row = rows[0];
-  const user = row ? { ...(row as any).user, profile: (row as any).profile ?? null } : null;
+  const user = await fetchEntityWithProfile(users, profiles, id, 'userId');
 
   if (!user) {
     return c.json({ success: false, message: 'User tidak ditemukan' }, 404);
   }
 
-  return c.json({ success: true, data: user });
+  // Sanitize user data to prevent XSS
+  const sanitizedUser = sanitizeUserProfile(user);
+
+  return c.json({ success: true, data: sanitizedUser });
 });
 
-router.post('/', zValidator('json', userPayload), async (c) => {
+router.post('/', rateLimit({ windowMs: 60000, maxRequests: 20 }), requireAuth, zValidator('json', userPayload), async (c) => {
   const payload = c.req.valid('json');
 
   const { email: rawEmail, username: rawUsername, phone: rawPhone, password, name, role } =
@@ -158,6 +164,7 @@ router.post('/', zValidator('json', userPayload), async (c) => {
   }
 
   try {
+    // Check for duplicates using helper functions
     if (email) {
       const existingEmail = await db.query.users.findFirst({
         columns: { id: true },
@@ -188,49 +195,57 @@ router.post('/', zValidator('json', userPayload), async (c) => {
       }
     }
 
-    const [insertResult] = await db.insert(users).values({
-      email,
-      username,
-      phone,
-      password: hashedPassword,
-      role: role ?? 1,
+    // Use transaction for atomic insert of user + profile
+    const result = await db.transaction(async (tx) => {
+      const [insertResult] = await tx.insert(users).values({
+        email,
+        username,
+        phone,
+        password: hashedPassword,
+        role: role ?? 1,
+      });
+
+      const insertId = Number(insertResult.insertId);
+
+      await tx.insert(profiles).values({
+        userId: insertId,
+        name: profileName,
+        email: rawEmail ?? null,
+        phone: rawPhone ?? null,
+      });
+
+      return insertId;
     });
 
-    const insertId = Number(insertResult.insertId);
+    const created = await fetchEntityWithProfile(users, profiles, result, 'userId');
 
-    await db.insert(profiles).values({
-      userId: insertId,
-      name: profileName,
-      email: rawEmail ?? null,
-      phone: rawPhone ?? null,
+    // Sanitize created user data
+    const sanitizedCreated = created ? sanitizeUserProfile(created) : null;
+
+    // Log audit event
+    const payload = c.get('jwtPayload');
+    await logAuditEvent({
+      userId: payload?.sub ? Number(payload.sub) : undefined,
+      action: 'CREATE',
+      entityType: 'user',
+      entityId: result,
+      changes: { email, username, phone, role: role ?? 1 },
+      ipAddress: getClientIp(c),
+      userAgent: getUserAgent(c),
     });
 
-    const createdRows = await db
-      .select({ user: users, profile: profiles })
-      .from(users)
-      .leftJoin(profiles, eq(profiles.userId, users.id))
-      .where(eq(users.id, insertId))
-      .limit(1);
-    const createdRow = createdRows[0];
-    const created = createdRow
-      ? { ...(createdRow as any).user, profile: (createdRow as any).profile ?? null }
-      : null;
-
-    return c.json({ success: true, data: created }, 201);
+    return c.json({ success: true, data: sanitizedCreated }, 201);
   } catch (error: any) {
     if (error?.code === 'ER_DUP_ENTRY') {
       return c.json({ success: false, message: 'Data user sudah ada' }, 409);
     }
-    console.error(error);
+    logger.error('Gagal membuat user', error, { email, username, phone });
     return c.json({ success: false, message: 'Gagal membuat user' }, 500);
   }
 });
 
-router.put('/:id', zValidator('json', updateUserPayload), async (c) => {
-  const id = Number(c.req.param('id'));
-  if (Number.isNaN(id)) {
-    return c.json({ success: false, message: 'ID tidak valid' }, 400);
-  }
+router.put('/:id', rateLimit({ windowMs: 60000, maxRequests: 50 }), requireAuth, validateIdParam('id'), zValidator('json', updateUserPayload), async (c) => {
+  const id = getValidatedId(c);
   const payload = c.req.valid('json');
 
   const sets: Partial<typeof users.$inferInsert> = {};
@@ -281,58 +296,76 @@ router.put('/:id', zValidator('json', updateUserPayload), async (c) => {
   if (payload.password) sets.password = await hashPassword(payload.password);
 
   try {
-    if (Object.keys(sets).length) {
-      await db.update(users).set(sets).where(eq(users.id, id));
-    }
-
-    if (Object.keys(profileUpdates).length) {
-      const existingProfile = await db
-        .select()
-        .from(profiles)
-        .where(eq(profiles.userId, id))
-        .limit(1);
-
-      if (existingProfile.length) {
-        await db
-          .update(profiles)
-          .set(profileUpdates)
-          .where(eq(profiles.userId, id));
-      } else {
-        await db.insert(profiles).values({
-          userId: id,
-          ...profileUpdates,
-        });
+    // Use transaction for atomic update of user + profile
+    await db.transaction(async (tx) => {
+      if (Object.keys(sets).length) {
+        await tx.update(users).set(sets).where(eq(users.id, id));
       }
-    }
 
-    const updatedRows = await db
-      .select({ user: users, profile: profiles })
-      .from(users)
-      .leftJoin(profiles, eq(profiles.userId, users.id))
-      .where(eq(users.id, id))
-      .limit(1);
-    const updatedRow = updatedRows[0];
-    const updated = updatedRow
-      ? { ...(updatedRow as any).user, profile: (updatedRow as any).profile ?? null }
-      : null;
+      if (Object.keys(profileUpdates).length) {
+        const existingProfile = await tx
+          .select()
+          .from(profiles)
+          .where(eq(profiles.userId, id))
+          .limit(1);
 
-    return c.json({ success: true, data: updated });
+        if (existingProfile.length) {
+          await tx
+            .update(profiles)
+            .set(profileUpdates)
+            .where(eq(profiles.userId, id));
+        } else {
+          await tx.insert(profiles).values({
+            userId: id,
+            ...profileUpdates,
+          });
+        }
+      }
+    });
+
+    const updated = await fetchEntityWithProfile(users, profiles, id, 'userId');
+
+    // Sanitize updated user data
+    const sanitizedUpdated = updated ? sanitizeUserProfile(updated) : null;
+
+    // Log audit event
+    const payload = c.get('jwtPayload');
+    await logAuditEvent({
+      userId: payload?.sub ? Number(payload.sub) : undefined,
+      action: 'UPDATE',
+      entityType: 'user',
+      entityId: id,
+      changes: { ...sets, ...profileUpdates },
+      ipAddress: getClientIp(c),
+      userAgent: getUserAgent(c),
+    });
+
+    return c.json({ success: true, data: sanitizedUpdated });
   } catch (error: any) {
     if (error?.code === 'ER_DUP_ENTRY') {
       return c.json({ success: false, message: 'Data user bentrok' }, 409);
     }
-    console.error(error);
+    logger.error('Gagal update user', error, { id });
     return c.json({ success: false, message: 'Gagal update user' }, 500);
   }
 });
 
-router.delete('/:id', async (c) => {
-  const id = Number(c.req.param('id'));
-  if (Number.isNaN(id)) {
-    return c.json({ success: false, message: 'ID tidak valid' }, 400);
-  }
+router.delete('/:id', rateLimit({ windowMs: 60000, maxRequests: 30 }), requireAuth, validateIdParam('id'), async (c) => {
+  const id = getValidatedId(c);
 
   await db.delete(users).where(eq(users.id, id));
+
+  // Log audit event
+  const payload = c.get('jwtPayload');
+  await logAuditEvent({
+    userId: payload?.sub ? Number(payload.sub) : undefined,
+    action: 'DELETE',
+    entityType: 'user',
+    entityId: id,
+    ipAddress: getClientIp(c),
+    userAgent: getUserAgent(c),
+  });
+
   return c.json({ success: true, message: 'User dihapus' });
 });
 

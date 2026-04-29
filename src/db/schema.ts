@@ -66,6 +66,7 @@ export const customers = mysqlTable(
     googleId: varchar("googleid", { length: 191 }),
     password: varchar("password", { length: 255 }),
     dataJson: json("data_json").$type<JsonRecord>(),
+    deletedAt: timestamp("deleted_at"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
   },
@@ -75,6 +76,11 @@ export const customers = mysqlTable(
     uniqueIndex("customers_phone_unique").on(table.phone),
     uniqueIndex("customers_fbid_unique").on(table.fbid),
     uniqueIndex("customers_googleid_unique").on(table.googleId),
+    index("customers_deleted_at_idx").on(table.deletedAt),
+    index("customers_created_at_idx").on(table.createdAt),
+    index("customers_updated_at_idx").on(table.updatedAt),
+    // Composite index for common queries
+    index("customers_deleted_created_idx").on(table.deletedAt, table.createdAt),
   ],
 );
 
@@ -394,6 +400,31 @@ export const accountLockoutEntries = mysqlTable(
   (table) => [
     uniqueIndex("account_lockout_identifier_unique").on(table.identifier),
     index("account_lockout_lock_until_idx").on(table.lockUntil),
+  ],
+);
+
+// ─── Audit Trail ─────────────────────────────────────────────────────────
+
+export const auditLogs = mysqlTable(
+  "audit_logs",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    userId: int("user_id").references(() => users.id, { onDelete: "set null" }),
+    customerId: int("customer_id").references(() => customers.id, { onDelete: "set null" }),
+    action: varchar("action", { length: 50 }).notNull(), // CREATE, UPDATE, DELETE, RESTORE, etc.
+    entityType: varchar("entity_type", { length: 50 }).notNull(), // customer, user, subscription, etc.
+    entityId: int("entity_id"),
+    changes: json("changes").$type<JsonRecord>(), // before/after values
+    ipAddress: varchar("ip_address", { length: 45 }),
+    userAgent: text("user_agent"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    index("audit_logs_user_idx").on(table.userId),
+    index("audit_logs_customer_idx").on(table.customerId),
+    index("audit_logs_entity_idx").on(table.entityType, table.entityId),
+    index("audit_logs_action_idx").on(table.action),
+    index("audit_logs_created_at_idx").on(table.createdAt),
   ],
 );
 

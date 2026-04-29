@@ -8,6 +8,10 @@
     "target": "ESNext",
     "lib": ["ESNext"],
     "types": ["bun-types"],
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"]
+    }
   }
 }

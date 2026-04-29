@@ -3,6 +3,9 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 
+import { securityHeaders } from "./middleware/security";
+import { compression } from "./middleware/compression";
+
 import userRoutes from "./routes/users";
 import profileRoutes from "./routes/profiles";
 import customerRoutes from "./routes/customers";
@@ -30,6 +33,8 @@ config();
 const app = new Hono().basePath("/api");
 
 app.use("*", logger());
+app.use("*", securityHeaders());
+app.use("*", compression());
 // CORS untuk public routes
 const publicCors = cors({
   origin: "*",

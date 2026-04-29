@@ -4,6 +4,9 @@
 import {db} from "../../db/client";
 import {accountLockoutEntries} from "../../db/schema";
 import {eq, and, isNull, gt} from "drizzle-orm";
+import {createLogger} from "../logger";
+
+const logger = createLogger('AccountLockout');
 
 interface LockoutOptions {
     maxAttempts: number; // Max failed attempts before lockout
@@ -77,7 +80,7 @@ export async function checkLockout(
         };
     } catch (error) {
         // On database error, allow login to proceed (fail-open)
-        console.error("Account lockout check error:", error);
+        logger.error('Account lockout check error', error);
         return {
             isLocked: false,
             remainingAttempts: options.maxAttempts,
@@ -145,7 +148,7 @@ export async function recordFailedAttempt(
         };
     } catch (error) {
         // On database error, allow login to proceed (fail-open)
-        console.error("Account lockout record error:", error);
+        logger.error('Account lockout record error', error);
         return {
             isLocked: false,
             remainingAttempts: options.maxAttempts - 1,
@@ -172,7 +175,7 @@ export async function recordSuccessfulAttempt(identifier: string): Promise<void>
                 .where(eq(accountLockoutEntries.identifier, identifier));
         }
     } catch (error) {
-        console.error("Account lockout reset error:", error);
+        logger.error('Account lockout reset error', error);
     }
 }
 
@@ -185,6 +188,6 @@ setInterval(async () => {
 
         await db.delete(accountLockoutEntries).where(and(isNull(accountLockoutEntries.lockUntil), gt(accountLockoutEntries.updatedAt, thirtyDaysAgo)));
     } catch (error) {
-        console.error("Account lockout cleanup error:", error);
+        logger.error('Account lockout cleanup error', error);
     }
 }, 300000); // Cleanup every 5 minutes
