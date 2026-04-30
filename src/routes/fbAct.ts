@@ -223,4 +223,61 @@ router.delete('/:id', async (c) => {
   return c.json({ success: true, message: 'FB Act dihapus' });
 });
 
+const validatePayload = z.object({
+  token: z.string().min(1),
+  actId: z.string().min(1),
+});
+
+router.post('/validate', zValidator('json', validatePayload), async (c) => {
+  const { token, actId } = c.req.valid('json');
+
+  const cleanActId = actId.trim().startsWith('act_') ? actId.trim() : `act_${actId.trim()}`;
+
+  try {
+    const url = new URL(`https://graph.facebook.com/v19.0/${cleanActId}`);
+    url.searchParams.set('fields', 'name,id,currency,account_status,amount_spent,balance');
+    url.searchParams.set('access_token', token);
+
+    const res = await fetch(url.toString());
+    const data: any = await res.json();
+
+    if (data.error) {
+      return c.json({
+        success: false,
+        message: data.error.message || 'Token atau Act ID tidak valid',
+        error: data.error,
+      });
+    }
+
+    const statusMap: Record<number, string> = {
+      1: 'Aktif',
+      2: 'Dinonaktifkan',
+      3: 'Tidak satupun',
+      7: 'Pending Risk Review',
+      8: 'Pending Settlement',
+      9: 'In Grace Period',
+      100: 'Pending Closure',
+      101: 'Closed',
+      201: 'Any Active',
+      202: 'Any Closed',
+    };
+
+    return c.json({
+      success: true,
+      data: {
+        id: data.id,
+        name: data.name,
+        currency: data.currency,
+        accountStatus: data.account_status,
+        accountStatusLabel: statusMap[data.account_status] ?? `Status ${data.account_status}`,
+        amountSpent: data.amount_spent,
+        balance: data.balance,
+      },
+    });
+  } catch (error: any) {
+    console.error(error);
+    return c.json({ success: false, message: 'Gagal menghubungi Meta API: ' + (error?.message || error) }, 500);
+  }
+});
+
 export default router;
