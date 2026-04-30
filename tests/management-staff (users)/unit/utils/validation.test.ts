@@ -1,15 +1,15 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
-// Mock the db-helpers module directly to test the logic
-vi.mock('@/utils/db-helpers', () => {
-  const actual = vi.importActual('@/utils/db-helpers');
-  return {
-    ...actual,
-    validateUniqueEmail: vi.fn(),
-    validateUniqueUsername: vi.fn(),
-    validateUniquePhone: vi.fn(),
-  };
-});
+// Mock the db-helpers module completely to avoid environment teardown error
+vi.mock('@/utils/db-helpers', () => ({
+  validateUniqueEmail: vi.fn(),
+  validateUniqueUsername: vi.fn(),
+  validateUniquePhone: vi.fn(),
+  softDeleteEntity: vi.fn(),
+  restoreEntity: vi.fn(),
+  fetchEntityWithProfile: vi.fn(),
+  fetchEntityById: vi.fn(),
+}));
 
 import { validateUniqueEmail, validateUniqueUsername, validateUniquePhone } from '@/utils/db-helpers';
 

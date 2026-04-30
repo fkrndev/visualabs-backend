@@ -1,32 +1,30 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Hono } from 'hono';
 
-// Mock database
-const mockDb = {
-  query: {
-    users: {
-      findFirst: vi.fn(),
-    },
-    profiles: {
-      findFirst: vi.fn(),
-    },
-    rateLimitEntries: {
-      findFirst: vi.fn(),
-    },
-  },
-  select: vi.fn(),
-  insert: vi.fn().mockReturnValue({
-    values: vi.fn().mockReturnValue({
-      onConflictDoNothing: vi.fn().mockResolvedValue(undefined),
-    }),
-  }),
-  update: vi.fn(),
-  delete: vi.fn(),
-  transaction: vi.fn(),
-};
-
+// Mock database - Fix hoisting issue by defining inside factory
 vi.mock('@/db/client', () => ({
-  db: mockDb,
+  db: {
+    query: {
+      users: {
+        findFirst: vi.fn(),
+      },
+      profiles: {
+        findFirst: vi.fn(),
+      },
+      rateLimitEntries: {
+        findFirst: vi.fn(),
+      },
+    },
+    select: vi.fn(),
+    insert: vi.fn().mockReturnValue({
+      values: vi.fn().mockReturnValue({
+        onConflictDoNothing: vi.fn().mockResolvedValue(undefined),
+      }),
+    }),
+    update: vi.fn(),
+    delete: vi.fn(),
+    transaction: vi.fn(),
+  },
 }));
 
 // Mock schema
@@ -103,7 +101,7 @@ import { sanitizeUserProfile } from '@/utils/security/xss';
 import { fetchEntityWithProfile } from '@/utils/db-helpers';
 
 // Type assertions for mocks
-const dbMock = db as typeof mockDb;
+const dbMock = db as any;
 
 describe('Users API Integration Tests', () => {
   let app: Hono;
@@ -113,18 +111,18 @@ describe('Users API Integration Tests', () => {
     app.route('/api/users', usersRouter);
     vi.clearAllMocks();
     // Reset all mock functions
-    mockDb.query.users.findFirst.mockReset();
-    mockDb.query.profiles.findFirst.mockReset();
-    mockDb.query.rateLimitEntries.findFirst.mockReset();
-    mockDb.select.mockReset();
-    mockDb.insert.mockReturnValue({
+    dbMock.query.users.findFirst.mockReset();
+    dbMock.query.profiles.findFirst.mockReset();
+    dbMock.query.rateLimitEntries.findFirst.mockReset();
+    dbMock.select.mockReset();
+    dbMock.insert.mockReturnValue({
       values: vi.fn().mockReturnValue({
         onConflictDoNothing: vi.fn().mockResolvedValue(undefined),
       }),
     });
-    mockDb.update.mockReset();
-    mockDb.delete.mockReset();
-    mockDb.transaction.mockReset();
+    dbMock.update.mockReset();
+    dbMock.delete.mockReset();
+    dbMock.transaction.mockReset();
   });
 
   describe('GET /users (List Staff)', () => {
