@@ -17,6 +17,13 @@
     "test:management-product": "vitest run tests/management-product/",
     "test:unit:management-product": "vitest run tests/management-product/unit/",
     "test:integration:management-product": "vitest run tests/management-product/integration/",
+    "test:subscription": "vitest run tests/subscription/",
+    "test:subscription:unit": "vitest run tests/subscription/unit/",
+    "test:subscription:integration": "vitest run tests/subscription/integration/",
+    "test:subscription:component": "vitest run tests/subscription/component/",
+    "test:subscription:watch": "vitest tests/subscription/",
+    "test:subscription:coverage": "vitest run tests/subscription/ --coverage",
+    "test:subscription:ui": "vitest --ui tests/subscription/",
     "format": "prettier --write .",
     "lint": "prettier --check ."
   },
@@ -36,6 +43,7 @@
     "zod": "^4.1.8"
   },
   "devDependencies": {
+    "@faker-js/faker": "^8.4.1",
     "@types/bun": "^1.2.21",
     "@vitest/coverage-v8": "^4.1.5",
     "drizzle-kit": "^0.31.6",

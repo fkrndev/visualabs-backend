@@ -1,0 +1,47 @@
+[
+  {
+    "id": 1,
+    "name": "Social Media Management",
+    "description": "Complete social media management and content creation services",
+    "price": "2999.00",
+    "category": "Social Media",
+    "createdAt": "2024-01-01T00:00:00Z",
+    "updatedAt": "2024-01-01T00:00:00Z"
+  },
+  {
+    "id": 2,
+    "name": "PPC Advertising",
+    "description": "Pay-per-click advertising campaign management and optimization",
+    "price": "1999.00",
+    "category": "Advertising",
+    "createdAt": "2024-01-01T00:00:00Z",
+    "updatedAt": "2024-01-01T00:00:00Z"
+  },
+  {
+    "id": 3,
+    "name": "B2B Marketing",
+    "description": "Business-to-business marketing and lead generation services",
+    "price": "3999.00",
+    "category": "B2B Marketing",
+    "createdAt": "2024-01-01T00:00:00Z",
+    "updatedAt": "2024-01-01T00:00:00Z"
+  },
+  {
+    "id": 4,
+    "name": "Content Marketing",
+    "description": "Content creation, blog management, and SEO optimization",
+    "price": "1499.00",
+    "category": "Content",
+    "createdAt": "2024-01-01T00:00:00Z",
+    "updatedAt": "2024-01-01T00:00:00Z"
+  },
+  {
+    "id": 5,
+    "name": "Email Marketing",
+    "description": "Email campaign management and automation services",
+    "price": "999.00",
+    "category": "Email Marketing",
+    "createdAt": "2024-01-01T00:00:00Z",
+    "updatedAt": "2024-01-01T00:00:00Z"
+  }
+]

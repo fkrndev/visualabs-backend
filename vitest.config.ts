@@ -20,6 +20,14 @@ export default defineConfig({
         '**/*.test.ts',
         '**/*.spec.ts',
       ],
+      thresholds: {
+        global: {
+          branches: 80,
+          functions: 80,
+          lines: 80,
+          statements: 80,
+        },
+      },
     },
   },
 });
