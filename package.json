@@ -25,7 +25,8 @@
     "test:subscription:coverage": "vitest run tests/subscription/ --coverage",
     "test:subscription:ui": "vitest --ui tests/subscription/",
     "format": "prettier --write .",
-    "lint": "prettier --check ."
+    "lint": "prettier --check .",
+    "job:meta-ads": "bun run scripts/run-meta-ads-report.ts"
   },
   "dependencies": {
     "@aws-sdk/client-ses": "^3.705.0",

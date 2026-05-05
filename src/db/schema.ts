@@ -932,3 +932,152 @@ export const fbActRelations = relations(fbAct, ({ one }) => ({
 export const fbTokenRelations = relations(fbToken, ({ one }) => ({
   user: one(users, { fields: [fbToken.userId], references: [users.id] }),
 }));
+
+export const fbActDailyData = mysqlTable(
+  "fb_act_daily_data",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    fbActId: int("fb_act_id").references(() => fbAct.id, { onDelete: "set null" }),
+    actId: varchar("act_id", { length: 64 }).notNull(),
+    date: date("date").notNull(),
+    balance: decimal("balance", { precision: 20, scale: 2 }),
+    amountSpent: decimal("amount_spent", { precision: 20, scale: 2 }),
+    spendCap: decimal("spend_cap", { precision: 20, scale: 2 }),
+    effectiveBalance: decimal("effective_balance", { precision: 20, scale: 2 }),
+    balanceType: varchar("balance_type", { length: 32 }),
+    spendingLimit: decimal("spending_limit", { precision: 20, scale: 2 }),
+    outstandingBalance: decimal("outstanding_balance", { precision: 20, scale: 2 }),
+    // 0 = ok, 1 = warning, 2 = critical
+    statusLevel: tinyint("status_level").notNull().default(0),
+    warningMessage: text("warning_message"),
+    spend: decimal("spend", { precision: 20, scale: 2 }),
+    impressions: int("impressions"),
+    reach: int("reach"),
+    frequency: decimal("frequency", { precision: 10, scale: 4 }),
+    linkClicks: int("link_clicks"),
+    ctr: decimal("ctr", { precision: 10, scale: 4 }),
+    cpm: decimal("cpm", { precision: 20, scale: 2 }),
+    cpc: decimal("cpc", { precision: 20, scale: 2 }),
+    dataJson: json("data_json").$type<JsonRecord>(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("fb_act_daily_data_act_date_unique").on(table.actId, table.date),
+    index("fb_act_daily_data_act_idx").on(table.actId),
+    index("fb_act_daily_data_date_idx").on(table.date),
+  ],
+);
+
+export const fbActResultConfig = mysqlTable(
+  "fb_act_result_config",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    fbActId: int("fb_act_id").references(() => fbAct.id, { onDelete: "set null" }),
+    actId: varchar("act_id", { length: 64 }).notNull(),
+    actionType: varchar("action_type", { length: 128 }).notNull(),
+    // lead | purchase | message | profile_visit
+    resultType: varchar("result_type", { length: 32 }).notNull(),
+    label: varchar("label", { length: 128 }).notNull(),
+    sortOrder: int("sort_order").notNull().default(0),
+    // 0 = false, 1 = true (instagram_profile_visit — dihitung dari link_click campaign Traffic)
+    isFallback: tinyint("is_fallback").notNull().default(0),
+    dataJson: json("data_json").$type<JsonRecord>(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("fb_act_result_config_act_action_unique").on(table.actId, table.actionType),
+    index("fb_act_result_config_act_idx").on(table.actId),
+  ],
+);
+
+export const fbActCampaignDailyInsights = mysqlTable(
+  "fb_act_campaign_daily_insights",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    fbActId: int("fb_act_id").references(() => fbAct.id, { onDelete: "set null" }),
+    actId: varchar("act_id", { length: 64 }).notNull(),
+    date: date("date").notNull(),
+    campaignId: varchar("campaign_id", { length: 64 }).notNull(),
+    campaignName: varchar("campaign_name", { length: 255 }),
+    spend: decimal("spend", { precision: 20, scale: 2 }),
+    linkClicks: int("link_clicks"),
+    // 0 = false, 1 = true
+    isTrafficCampaign: tinyint("is_traffic_campaign").notNull().default(0),
+    resolvedPrimaryActionType: varchar("resolved_primary_action_type", { length: 128 }),
+    dataJson: json("data_json").$type<JsonRecord>(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("fb_act_campaign_daily_act_date_camp_unique").on(table.actId, table.date, table.campaignId),
+    index("fb_act_campaign_daily_act_idx").on(table.actId),
+    index("fb_act_campaign_daily_date_idx").on(table.date),
+  ],
+);
+
+export const fbActResultBreakdownDaily = mysqlTable(
+  "fb_act_result_breakdown_daily",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    fbActId: int("fb_act_id").references(() => fbAct.id, { onDelete: "set null" }),
+    actId: varchar("act_id", { length: 64 }).notNull(),
+    date: date("date").notNull(),
+    label: varchar("label", { length: 128 }).notNull(),
+    // 0 = primary, 1 = traffic, 2 = fallback
+    resultType: tinyint("result_type").notNull().default(0),
+    results: int("results").notNull().default(0),
+    spent: decimal("spent", { precision: 20, scale: 2 }),
+    totalPurchase: int("total_purchase"),
+    purchaseValue: decimal("purchase_value", { precision: 20, scale: 2 }),
+    costPerPurchase: decimal("cost_per_purchase", { precision: 20, scale: 2 }),
+    roas: decimal("roas", { precision: 10, scale: 4 }),
+    dataJson: json("data_json").$type<JsonRecord>(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("fb_act_breakdown_act_date_label_unique").on(table.actId, table.date, table.label),
+    index("fb_act_breakdown_act_idx").on(table.actId),
+    index("fb_act_breakdown_date_idx").on(table.date),
+  ],
+);
+
+export const fbActNotificationsLog = mysqlTable(
+  "fb_act_notifications_log",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    fbActId: int("fb_act_id").references(() => fbAct.id, { onDelete: "set null" }),
+    actId: varchar("act_id", { length: 64 }).notNull(),
+    date: date("date").notNull(),
+    // main | extra (extra = grup Telegram tambahan per akun)
+    type: varchar("type", { length: 64 }).notNull(),
+    dataJson: json("data_json").$type<JsonRecord>(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    index("fb_act_notif_log_act_idx").on(table.actId),
+    index("fb_act_notif_log_date_idx").on(table.date),
+    index("fb_act_notif_log_type_idx").on(table.type),
+  ],
+);
+
+export const fbActReportRuns = mysqlTable(
+  "fb_act_report_runs",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    date: date("date").notNull(),
+    startedAt: timestamp("started_at"),
+    finishedAt: timestamp("finished_at"),
+    accountsTotal: int("accounts_total").notNull().default(0),
+    accountsSuccess: int("accounts_success").notNull().default(0),
+    accountsFailed: int("accounts_failed").notNull().default(0),
+    dataJson: json("data_json").$type<JsonRecord>(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("fb_act_report_runs_date_unique").on(table.date),
+    index("fb_act_report_runs_date_idx").on(table.date),
+  ],
+);

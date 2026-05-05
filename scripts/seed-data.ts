@@ -2,6 +2,7 @@ import { drizzle } from 'drizzle-orm/mysql2';
 import { createPool } from 'mysql2/promise';
 import { config } from 'dotenv';
 import * as schema from '../src/db/schema';
+import { cleanEmail } from '../src/utils/normalizers';
 
 config();
 
@@ -55,12 +56,13 @@ async function main() {
 
   const userIds: number[] = [];
   for (const u of userSeed) {
-    const existing = await db.query.users.findFirst({ where: (t, { eq }) => eq(t.email, u.email) });
+    const email = cleanEmail(u.email);
+    const existing = await db.query.users.findFirst({ where: (t, { eq }) => eq(t.email, email) });
     if (existing) { userIds.push(existing.id); continue; }
-    const r = await db.insert(schema.users).values({ email: u.email, username: u.username, phone: u.phone, password: pw, role: u.role });
+    const r = await db.insert(schema.users).values({ email, username: u.username, phone: u.phone, password: pw, role: u.role });
     const uid = insertId(r);
     userIds.push(uid);
-    await db.insert(schema.profiles).values({ userId: uid, name: u.name, email: u.email, phone: u.phone });
+    await db.insert(schema.profiles).values({ userId: uid, name: u.name, email, phone: u.phone });
   }
   console.log(`  ✓ ${userIds.length} users`);
 
