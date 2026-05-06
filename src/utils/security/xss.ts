@@ -1,13 +1,27 @@
 /**
  * XSS (Cross-Site Scripting) sanitization utilities
  * Helps prevent XSS attacks by sanitizing user-generated content
+ * All features can be controlled via environment variables (default: off)
  */
+
+/**
+ * Check if XSS protection is enabled
+ */
+function isXssProtectionEnabled(): boolean {
+    return process.env.ENABLE_XSS_PROTECTION === 'true';
+}
 
 /**
  * Escape HTML special characters to prevent XSS
  */
 export function escapeHtml(unsafe: string): string {
     if (typeof unsafe !== "string") return unsafe;
+    
+    // Skip sanitization if XSS protection is disabled
+    if (!isXssProtectionEnabled()) {
+        return unsafe;
+    }
+    
     return unsafe.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
 }
 
@@ -16,6 +30,11 @@ export function escapeHtml(unsafe: string): string {
  */
 export function sanitizeObject<T extends Record<string, any>>(obj: T): T {
     if (!obj || typeof obj !== "object") return obj;
+
+    // Skip sanitization if XSS protection is disabled
+    if (!isXssProtectionEnabled()) {
+        return obj;
+    }
 
     const sanitized: Record<string, any> = Array.isArray(obj) ? [] : {};
 
@@ -46,6 +65,11 @@ export function sanitizeObject<T extends Record<string, any>>(obj: T): T {
 export function sanitizeFields<T extends Record<string, any>>(obj: T, fields: (keyof T)[]): T {
     if (!obj || typeof obj !== "object") return obj;
 
+    // Skip sanitization if XSS protection is disabled
+    if (!isXssProtectionEnabled()) {
+        return obj;
+    }
+
     const sanitized = {...obj};
 
     for (const field of fields) {
@@ -65,6 +89,11 @@ export function sanitizeFields<T extends Record<string, any>>(obj: T, fields: (k
  */
 export function sanitizeUserProfile(profile: any): any {
     if (!profile) return profile;
+
+    // Skip sanitization if XSS protection is disabled
+    if (!isXssProtectionEnabled()) {
+        return profile;
+    }
 
     const fieldsToSanitize: (keyof any)[] = ["name", "email", "phone", "username", "address", "city", "province", "country"];
 

@@ -29,6 +29,17 @@ export const PERMISSION = {
   ADMIN_DELETE: 'admin:delete',
 } as const;
 
+// Check if permission system is enabled
+function isPermissionSystemEnabled(): boolean {
+  return process.env.ENABLE_PERMISSION_SYSTEM !== 'false';
+}
+
+// Get default role when permission system is disabled
+function getDefaultRole(): number {
+  const defaultRoleStr = process.env.DEFAULT_ROLE_WHEN_DISABLED;
+  return defaultRoleStr ? parseInt(defaultRoleStr) : ROLE_ADMIN;
+}
+
 // Role permissions mapping
 export const ROLE_PERMISSIONS: Record<number, string[]> = {
   [ROLE_ADMIN]: [
@@ -57,6 +68,11 @@ export const ROLE_PERMISSIONS: Record<number, string[]> = {
 };
 
 export function hasPermission(userRole: number, requiredPermission: string): boolean {
+  // If permission system is disabled, grant all permissions
+  if (!isPermissionSystemEnabled()) {
+    return true;
+  }
+  
   const permissions = ROLE_PERMISSIONS[userRole] || [];
   return permissions.includes(requiredPermission);
 }
@@ -65,4 +81,12 @@ export function requirePermission(requiredPermission: string) {
   return (userRole: number): boolean => {
     return hasPermission(userRole, requiredPermission);
   };
+}
+
+// Get effective user role (fallback to default if permission system disabled)
+export function getEffectiveRole(userRole: number): number {
+  if (!isPermissionSystemEnabled()) {
+    return getDefaultRole();
+  }
+  return userRole;
 }

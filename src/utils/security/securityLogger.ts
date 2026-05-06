@@ -24,6 +24,11 @@ export interface SecurityLogEntry {
 }
 
 export function logSecurityEvent(entry: SecurityLogEntry): void {
+    // Skip logging if security logging is disabled
+    if (process.env.ENABLE_SECURITY_LOGGING === 'false') {
+        return;
+    }
+
     const logEntry = {
         timestamp: new Date().toISOString(),
         ...entry,

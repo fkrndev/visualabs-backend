@@ -3,7 +3,7 @@ import { verify } from "hono/jwt";
 import { config } from "dotenv";
 import { TYPE_CUSTOMER } from "../constants/auth";
 import type { Context, Next } from "hono";
-import { hasPermission } from "../utils/auth/permissions";
+import { hasPermission, getEffectiveRole } from "../utils/auth/permissions";
 
 config();
 
@@ -136,7 +136,10 @@ export const requirePermission = (requiredPermission: string) => {
       }, 403);
     }
 
-    if (!hasPermission(role, requiredPermission)) {
+    // Use effective role (fallback to default if permission system disabled)
+    const effectiveRole = getEffectiveRole(role);
+
+    if (!hasPermission(effectiveRole, requiredPermission)) {
       return c.json({
         success: false,
         message: `Forbidden: Missing required permission: ${requiredPermission}`
@@ -145,7 +148,7 @@ export const requirePermission = (requiredPermission: string) => {
 
     // Store user info in context for use in handlers
     c.set('userId', userId);
-    c.set('userRole', role);
+    c.set('userRole', effectiveRole);
 
     await next();
   };

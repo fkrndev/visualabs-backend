@@ -89,6 +89,11 @@ export async function checkBulkExistence(
 
 // Common soft delete patterns
 export async function softDeleteEntity(table: any, id: number) {
+  // Skip soft delete if disabled (use hard delete instead)
+  if (process.env.ENABLE_SOFT_DELETE === 'false') {
+    return db.delete(table).where(eq(table.id, id));
+  }
+  
   return db
     .update(table)
     .set({ deletedAt: new Date() })
@@ -96,6 +101,11 @@ export async function softDeleteEntity(table: any, id: number) {
 }
 
 export async function restoreEntity(table: any, id: number) {
+  // Skip restore if soft delete is disabled
+  if (process.env.ENABLE_SOFT_DELETE === 'false') {
+    throw new Error('Restore not available when soft delete is disabled');
+  }
+  
   return db
     .update(table)
     .set({ deletedAt: null })

@@ -15,6 +15,12 @@ export function rateLimit(options: RateLimitOptions) {
   const { windowMs, maxRequests, skipSuccessfulRequests = false } = options;
 
   return async (c: any, next: any) => {
+    // Skip rate limiting if disabled
+    if (process.env.ENABLE_RATE_LIMIT === 'false') {
+      await next();
+      return;
+    }
+
     const identifier = getClientIdentifier(c);
     const now = new Date();
     const resetTime = new Date(now.getTime() + windowMs);

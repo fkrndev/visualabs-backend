@@ -3,55 +3,73 @@ import type { Context, Next } from 'hono';
 /**
  * Security headers middleware
  * Adds various security headers to all responses
+ * All features can be controlled via environment variables (default: off)
  */
 export function securityHeaders() {
   return async (c: Context, next: Next) => {
     await next();
 
-    // Content Security Policy
-    c.header('Content-Security-Policy', 
-      "default-src 'self'; " +
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval'; " +
-      "style-src 'self' 'unsafe-inline'; " +
-      "img-src 'self' data: https:; " +
-      "font-src 'self' data:; " +
-      "connect-src 'self'; " +
-      "frame-ancestors 'none';"
-    );
-
-    // Prevent clickjacking
-    c.header('X-Frame-Options', 'DENY');
-
-    // Prevent MIME type sniffing
-    c.header('X-Content-Type-Options', 'nosniff');
-
-    // Enable XSS protection
-    c.header('X-XSS-Protection', '1; mode=block');
-
-    // Referrer policy
-    c.header('Referrer-Policy', 'strict-origin-when-cross-origin');
-
-    // Permissions policy (formerly Feature-Policy)
-    c.header('Permissions-Policy', 
-      'geolocation=(), ' +
-      'microphone=(), ' +
-      'camera=(), ' +
-      'payment=()'
-    );
-
-    // HSTS (HTTP Strict Transport Security) - only in production
-    if (process.env.NODE_ENV === 'production') {
-      c.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload');
+    // Content Security Policy - disabled by default
+    if (process.env.ENABLE_CSP === 'true') {
+      const cspPolicy = process.env.CSP_POLICY || 
+        "default-src 'self'; " +
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval'; " +
+        "style-src 'self' 'unsafe-inline'; " +
+        "img-src 'self' data: https:; " +
+        "font-src 'self' data:; " +
+        "connect-src 'self'; " +
+        "frame-ancestors 'none';";
+      c.header('Content-Security-Policy', cspPolicy);
     }
 
-    // Remove server information
-    c.header('Server', '');
+    // Prevent clickjacking - disabled by default
+    if (process.env.ENABLE_X_FRAME_OPTIONS === 'true') {
+      c.header('X-Frame-Options', process.env.X_FRAME_OPTIONS || 'DENY');
+    }
 
-    // Prevent caching of sensitive data
-    if (c.req.method === 'POST' || c.req.method === 'PUT' || c.req.method === 'DELETE') {
-      c.header('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-      c.header('Pragma', 'no-cache');
-      c.header('Expires', '0');
+    // Prevent MIME type sniffing - disabled by default
+    if (process.env.ENABLE_X_CONTENT_TYPE_OPTIONS === 'true') {
+      c.header('X-Content-Type-Options', 'nosniff');
+    }
+
+    // Enable XSS protection - disabled by default
+    if (process.env.ENABLE_X_XSS_PROTECTION === 'true') {
+      c.header('X-XSS-Protection', '1; mode=block');
+    }
+
+    // Referrer policy - disabled by default
+    if (process.env.ENABLE_REFERRER_POLICY === 'true') {
+      c.header('Referrer-Policy', process.env.REFERRER_POLICY || 'strict-origin-when-cross-origin');
+    }
+
+    // Permissions policy (formerly Feature-Policy) - disabled by default
+    if (process.env.ENABLE_PERMISSIONS_POLICY === 'true') {
+      const permissionsPolicy = process.env.PERMISSIONS_POLICY || 
+        'geolocation=(), ' +
+        'microphone=(), ' +
+        'camera=(), ' +
+        'payment=()';
+      c.header('Permissions-Policy', permissionsPolicy);
+    }
+
+    // HSTS (HTTP Strict Transport Security) - disabled by default, only in production if enabled
+    if (process.env.ENABLE_HSTS === 'true' && process.env.NODE_ENV === 'production') {
+      const hstsPolicy = process.env.HSTS_POLICY || 'max-age=31536000; includeSubDomains; preload';
+      c.header('Strict-Transport-Security', hstsPolicy);
+    }
+
+    // Remove server information - disabled by default
+    if (process.env.ENABLE_REMOVE_SERVER === 'true') {
+      c.header('Server', '');
+    }
+
+    // Prevent caching of sensitive data - disabled by default
+    if (process.env.ENABLE_CACHE_CONTROL === 'true') {
+      if (c.req.method === 'POST' || c.req.method === 'PUT' || c.req.method === 'DELETE') {
+        c.header('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+        c.header('Pragma', 'no-cache');
+        c.header('Expires', '0');
+      }
     }
   };
 }

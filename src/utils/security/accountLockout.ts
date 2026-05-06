@@ -28,6 +28,15 @@ export async function checkLockout(
     remainingAttempts: number;
     lockRemainingTime: number;
 }> {
+    // Skip lockout check if account lockout is disabled
+    if (process.env.ENABLE_ACCOUNT_LOCKOUT === 'false') {
+        return {
+            isLocked: false,
+            remainingAttempts: options.maxAttempts,
+            lockRemainingTime: 0,
+        };
+    }
+
     const now = new Date();
 
     try {
@@ -97,6 +106,15 @@ export async function recordFailedAttempt(
     remainingAttempts: number;
     lockRemainingTime: number;
 }> {
+    // Skip recording failed attempt if account lockout is disabled
+    if (process.env.ENABLE_ACCOUNT_LOCKOUT === 'false') {
+        return {
+            isLocked: false,
+            remainingAttempts: options.maxAttempts,
+            lockRemainingTime: 0,
+        };
+    }
+
     const now = new Date();
 
     try {
