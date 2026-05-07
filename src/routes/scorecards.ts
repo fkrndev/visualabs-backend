@@ -29,7 +29,7 @@ const paginationQuery = z.object({
 });
 
 const scorecardPayload = z.object({
-  title: z.string().min(1),
+  title: z.string().min(1).refine(val => val.trim().length > 0, 'Title cannot be empty or whitespace only'),
   customerId: z.coerce.number().int().optional(),
   subscriptionId: z.coerce.number().int().optional(),
   assignedTo: z.coerce.number().int().optional(),
@@ -47,7 +47,11 @@ const scorecardPayload = z.object({
   status: z.coerce.number().int().default(1),
 });
 
-const updateScorecardPayload = scorecardPayload.partial();
+const updateScorecardPayload = scorecardPayload.partial().extend({
+  description: z.string().nullable().optional(),
+  targetValue: z.string().nullable().optional(),
+  unitCustom: z.string().nullable().optional(),
+});
 
 function formatRow(row: any) {
   return {
@@ -262,4 +266,5 @@ router.delete('/:id', async (c) => {
   return c.json({ success: true, message: 'Scorecard dihapus' });
 });
 
+export { paginationQuery, scorecardPayload, updateScorecardPayload, formatRow, buildSelectQuery };
 export default router;

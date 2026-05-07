@@ -497,4 +497,5 @@ router.delete('/:id', async (c) => {
   return c.json({ success: true, message: 'Scorecard data dihapus' });
 });
 
+export { isCurrentPeriod, computeAutoFields, computeTrend, formatRow, buildSelectQuery };
 export default router;
