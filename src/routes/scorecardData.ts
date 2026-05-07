@@ -278,7 +278,7 @@ router.get('/dashboard', zValidator('query', dashboardQuery), async (c) => {
   return c.json({
     success: true,
     data: items,
-    page: { limit, lastId, hasNext, sortBy: sortKey, sortOrder },
+    page: { page, limit, lastId, hasNext, sortBy: sortKey, sortOrder },
   });
 });
 
@@ -287,6 +287,12 @@ router.get('/history/:scorecardId', async (c) => {
   const scorecardId = Number(c.req.param('scorecardId'));
   if (Number.isNaN(scorecardId)) {
     return c.json({ success: false, message: 'scorecardId tidak valid' }, 400);
+  }
+
+  // Check if scorecard exists first
+  const scorecardRows = await db.select().from(scorecards).where(eq(scorecards.id, scorecardId)).limit(1);
+  if (scorecardRows.length === 0) {
+    return c.json({ success: false, message: 'Scorecard tidak ditemukan' }, 404);
   }
 
   const rows = await db
@@ -368,7 +374,7 @@ router.get('/', zValidator('query', paginationQuery), async (c) => {
   return c.json({
     success: true,
     data: items,
-    page: { limit, lastId, hasNext, sortBy: sortKey, sortOrder },
+    page: { page, limit, lastId, hasNext, sortBy: sortKey, sortOrder },
   });
 });
 

@@ -22,14 +22,12 @@ const paginationQuery = z.object({
   status: z.coerce.number().int().optional(),
   category: z.coerce.number().int().optional(),
   pic: z.coerce.number().int().optional(),
-  sortBy: z
-    .enum(['id', 'title', 'status', 'category', 'pic', 'createdAt', 'updatedAt'])
-    .optional(),
+  sortBy: z.string().optional(),
   sortOrder: z.enum(['asc', 'desc']).optional(),
 });
 
 const scorecardPayload = z.object({
-  title: z.string().min(1).refine(val => val.trim().length > 0, 'Title cannot be empty or whitespace only'),
+  title: z.string().min(1, 'Title is required').refine(val => val.trim().length > 0, 'Title cannot be empty or whitespace only'),
   customerId: z.coerce.number().int().optional(),
   subscriptionId: z.coerce.number().int().optional(),
   assignedTo: z.coerce.number().int().optional(),
@@ -144,13 +142,21 @@ router.get('/', zValidator('query', paginationQuery), async (c) => {
   const rows = await query;
   const items = rows.map(formatRow);
 
+  // Get total count for pagination
+  const countQuery = db.select({ count: scorecards.id }).from(scorecards);
+  if (whereExpr) {
+    countQuery.where(whereExpr);
+  }
+  const countResult = await countQuery;
+  const total = countResult.length;
+
   const lastId = items.length ? items[items.length - 1].id ?? null : null;
   const hasNext = items.length === limit;
 
   return c.json({
     success: true,
     data: items,
-    page: { limit, lastId, hasNext, sortBy: sortKey, sortOrder },
+    page: { limit, lastId, hasNext, sortBy: sortKey, sortOrder, total, page },
   });
 });
 
@@ -167,7 +173,7 @@ router.get('/:id', async (c) => {
   const item = rows[0] ? formatRow(rows[0]) : null;
 
   if (!item) {
-    return c.json({ success: false, message: 'Scorecard tidak ditemukan' }, 404);
+    return c.json({ success: false, message: 'Scorecard not found' }, 404);
   }
 
   return c.json({ success: true, data: item });
@@ -241,6 +247,15 @@ router.put('/:id', zValidator('json', updateScorecardPayload), async (c) => {
   }
 
   try {
+    // Check if record exists first
+    const existingRows = await buildSelectQuery()
+      .where(eq(scorecards.id, id))
+      .limit(1);
+    
+    if (!existingRows[0]) {
+      return c.json({ success: false, message: 'Scorecard not found' }, 404);
+    }
+
     await db.update(scorecards).set(sets).where(eq(scorecards.id, id));
 
     const updatedRows = await buildSelectQuery()
@@ -262,8 +277,17 @@ router.delete('/:id', async (c) => {
     return c.json({ success: false, message: 'ID tidak valid' }, 400);
   }
 
+  // Check if record exists first
+  const existingRows = await buildSelectQuery()
+    .where(eq(scorecards.id, id))
+    .limit(1);
+  
+  if (!existingRows[0]) {
+    return c.json({ success: false, message: 'Scorecard not found' }, 404);
+  }
+
   await db.delete(scorecards).where(eq(scorecards.id, id));
-  return c.json({ success: true, message: 'Scorecard dihapus' });
+  return c.json({ success: true, message: 'Scorecard deleted successfully' });
 });
 
 export { paginationQuery, scorecardPayload, updateScorecardPayload, formatRow, buildSelectQuery };

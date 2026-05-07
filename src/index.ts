@@ -115,7 +115,7 @@ app.onError((err, c) => {
   console.error("Error:", err);
   
   // JWT errors should return 401, not 500
-  if (err.name === 'JwtTokenExpired' || err.name === 'JwtTokenNotBefore' || err.message.includes('Unauthorized')) {
+  if (err.name === 'JwtTokenExpired' || err.name === 'JwtTokenNotBefore' || err.message.includes('Unauthorized') || err.message.includes('no authorization included in request')) {
     return c.json(
       {
         success: false,
@@ -139,6 +139,8 @@ app.onError((err, c) => {
 const port = parseInt(process.env.PORT || "2024", 10);
 console.log("PORT:", port);
 console.log(`Server is running on http://localhost:${port}`);
+
+export { app };
 
 export default {
   port,
