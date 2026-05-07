@@ -14,11 +14,12 @@ import {
   isNull,
   isNotNull,
   not,
+  inArray,
   sql,
 } from 'drizzle-orm';
 
 import { db } from '../db/client';
-import { customers, customerProfiles } from '../db/schema';
+import { customers, customerProfiles, subscriptions } from '../db/schema';
 import { cleanEmail, cleanPhone } from '../utils/normalizers';
 import { hashPassword } from '../utils/security';
 import { logAuditEvent, getClientIp, getUserAgent } from '../utils/audit';
@@ -99,6 +100,7 @@ const paginationQuery = z.object({
   phone: z.string().trim().optional(),
   fbid: z.string().trim().optional(),
   googleId: z.string().trim().optional(),
+  advertiserId: z.coerce.number().int().optional(),
   sortBy: z
     .enum(['id', 'email', 'username', 'phone', 'createdAt', 'updatedAt', 'profile.name', 'profile.email', 'profile.phone'])
     .optional(),
@@ -108,7 +110,7 @@ const paginationQuery = z.object({
   includeDeleted: z.coerce.boolean().optional(),
   dateFrom: z.string().optional(),
   dateTo: z.string().optional(),
-  fields: z.string().optional(), // Comma-separated list of fields to return
+  fields: z.string().optional(),
 });
 
 const customerPayload = z.object({
@@ -159,6 +161,7 @@ router.get('/', csrfProtection, rateLimit({ windowMs: 60000, maxRequests: 100 })
     phone,
     fbid,
     googleId,
+    advertiserId,
     sortBy: sortByParam,
     sortOrder: sortOrderParam,
     filters: filtersParam,
@@ -212,6 +215,13 @@ router.get('/', csrfProtection, rateLimit({ windowMs: 60000, maxRequests: 100 })
   if (phone) baseFilters.push(like(customers.phone, `%${phone}%`));
   if (fbid) baseFilters.push(like(customers.fbid, `%${fbid}%`));
   if (googleId) baseFilters.push(like(customers.googleId, `%${googleId}%`));
+  if (advertiserId) {
+    const subquery = db
+      .selectDistinct({ customerId: subscriptions.customerId })
+      .from(subscriptions)
+      .where(eq(subscriptions.advertiserId, advertiserId));
+    baseFilters.push(inArray(customers.id, subquery));
+  }
 
   if (filtersParam) {
     try {
