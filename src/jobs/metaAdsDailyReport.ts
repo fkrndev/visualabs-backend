@@ -247,17 +247,44 @@ export function getEffectiveBalance(config: FbActConfig, balanceData: MetaBalanc
   return { balance: balanceRaw / 100, balanceType: "Prepaid", spendingLimit: null, outstandingBalance: null };
 }
 
-export function getSaldoStatus(balance: number, balanceType: string): { emoji: string; warningMsg: string | null } {
+export function getSaldoStatus(
+  balance: number,
+  balanceType: string,
+  overrides?: { warning?: number | null; critical?: number | null; postpaid?: number | null },
+): { emoji: string; warningMsg: string | null } {
+  const warning = overrides?.warning ?? THRESHOLD_WARNING;
+  const critical = overrides?.critical ?? THRESHOLD_CRITICAL;
   if (balanceType === "Postpaid") {
+    const postpaidWarn = overrides?.postpaid ?? 1_000_000;
     if (balance <= 0) return { emoji: "🔴", warningMsg: "🚨 <b>Tagihan sudah mencapai threshold!</b> Kartu akan segera ditagih otomatis." };
     if (balance < 500_000) return { emoji: "🔴", warningMsg: "🚨 <b>Ruang tagihan tinggal &lt; Rp 500.000!</b> Kartu akan segera ditagih otomatis." };
-    if (balance < 1_000_000) return { emoji: "💛", warningMsg: "💛 Ruang tagihan tinggal &lt; Rp 1jt — kartu akan segera ditagih." };
+    if (balance < postpaidWarn) return { emoji: "💛", warningMsg: `💛 Ruang tagihan tinggal &lt; Rp ${postpaidWarn.toLocaleString("id-ID")} — kartu akan segera ditagih.` };
     return { emoji: "🟢", warningMsg: null };
   }
   if (balance <= 0) return { emoji: "🔴", warningMsg: "🚨 <b>SALDO HABIS!</b> Segera top up — iklan sudah berhenti atau akan berhenti selamanya!" };
-  if (balance < THRESHOLD_CRITICAL) return { emoji: "🔴", warningMsg: "🚨 <b>Saldo di bawah Rp 100.000!</b> Segera top up sekarang — iklanmu hampir mati!" };
-  if (balance < THRESHOLD_WARNING) return { emoji: "💛", warningMsg: "💛 Saldo tinggal &lt; Rp 1jt, pertimbangkan top up." };
+  if (balance < critical) return { emoji: "🔴", warningMsg: `🚨 <b>Saldo di bawah Rp ${critical.toLocaleString("id-ID")}!</b> Segera top up sekarang — iklanmu hampir mati!` };
+  if (balance < warning) return { emoji: "💛", warningMsg: `💛 Saldo tinggal &lt; Rp ${warning.toLocaleString("id-ID")}, pertimbangkan top up.` };
   return { emoji: "🟢", warningMsg: null };
+}
+
+export function computeStatusLevel(
+  balance: number,
+  balanceType: string,
+  overrides?: { warning?: number | null; critical?: number | null; postpaid?: number | null },
+): 0 | 1 | 2 {
+  const warning = overrides?.warning ?? THRESHOLD_WARNING;
+  const critical = overrides?.critical ?? THRESHOLD_CRITICAL;
+  if (balanceType === "Postpaid") {
+    const postpaidWarn = overrides?.postpaid ?? 1_000_000;
+    if (balance <= 0) return 2;
+    if (balance < 500_000) return 2;
+    if (balance < postpaidWarn) return 1;
+    return 0;
+  }
+  if (balance <= 0) return 2;
+  if (balance < critical) return 2;
+  if (balance < warning) return 1;
+  return 0;
 }
 
 // ─────────────────────────────────────────────
@@ -568,6 +595,9 @@ export async function runMetaAdsDailyReport(): Promise<void> {
       actName: fbAct.actName,
       name: fbAct.name,
       dataJson: fbAct.dataJson,
+      thresholdWarningOverride: fbAct.thresholdWarningOverride,
+      thresholdCriticalOverride: fbAct.thresholdCriticalOverride,
+      postpaidThresholdOverride: fbAct.postpaidThresholdOverride,
       token: fbToken.token,
     })
     .from(fbAct)
@@ -599,7 +629,13 @@ export async function runMetaAdsDailyReport(): Promise<void> {
 
       // 2. Hitung billing
       const balanceInfo = getEffectiveBalance(config, balanceData);
-      const { emoji: statusEmoji, warningMsg } = getSaldoStatus(balanceInfo.balance, balanceInfo.balanceType);
+      const thresholdOverrides = {
+        warning: act.thresholdWarningOverride != null ? Number(act.thresholdWarningOverride) : null,
+        critical: act.thresholdCriticalOverride != null ? Number(act.thresholdCriticalOverride) : null,
+        postpaid: act.postpaidThresholdOverride != null ? Number(act.postpaidThresholdOverride) : null,
+      };
+      const { emoji: statusEmoji, warningMsg } = getSaldoStatus(balanceInfo.balance, balanceInfo.balanceType, thresholdOverrides);
+      const statusLevel = computeStatusLevel(balanceInfo.balance, balanceInfo.balanceType, thresholdOverrides);
 
       // 3. Hitung breakdown result
       const breakdown = buildResultBreakdown(config, campInsights);
@@ -628,7 +664,7 @@ export async function runMetaAdsDailyReport(): Promise<void> {
         balanceType: balanceInfo.balanceType,
         spendingLimit: balanceInfo.spendingLimit ? String(balanceInfo.spendingLimit) : null,
         outstandingBalance: balanceInfo.outstandingBalance ? String(balanceInfo.outstandingBalance) : null,
-        statusLevel: balanceInfo.balance <= 0 ? 2 : balanceInfo.balance < THRESHOLD_CRITICAL ? 2 : balanceInfo.balance < THRESHOLD_WARNING ? 1 : 0,
+        statusLevel,
         warningMessage: warningMsg ?? null,
         spend: acctInsights ? String(spend) : null,
         impressions: acctInsights ? parseInt(acctInsights.impressions ?? "0") : null,
@@ -646,7 +682,7 @@ export async function runMetaAdsDailyReport(): Promise<void> {
           balanceType: balanceInfo.balanceType,
           spendingLimit: balanceInfo.spendingLimit ? String(balanceInfo.spendingLimit) : null,
           outstandingBalance: balanceInfo.outstandingBalance ? String(balanceInfo.outstandingBalance) : null,
-          statusLevel: balanceInfo.balance <= 0 ? 2 : balanceInfo.balance < THRESHOLD_CRITICAL ? 2 : balanceInfo.balance < THRESHOLD_WARNING ? 1 : 0,
+          statusLevel,
           warningMessage: warningMsg ?? null,
           spend: acctInsights ? String(spend) : null,
           impressions: acctInsights ? parseInt(acctInsights.impressions ?? "0") : null,
