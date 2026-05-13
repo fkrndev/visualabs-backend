@@ -30,8 +30,8 @@ import { eq, and, isNotNull } from "drizzle-orm";
 const META_API_BASE = "https://graph.facebook.com/v20.0";
 const WIB_OFFSET_MS = 7 * 60 * 60 * 1000;
 
-const THRESHOLD_CRITICAL = 100_000;
-const THRESHOLD_WARNING = 1_000_000;
+export const THRESHOLD_CRITICAL = 100_000;
+export const THRESHOLD_WARNING = 1_000_000;
 
 // Action aliases — normalisasi action_type yang artinya sama
 const ACTION_ALIASES: Record<string, string> = {
@@ -70,7 +70,7 @@ interface ResultConfigItem {
   label: string;
 }
 
-interface FbActConfig {
+export interface FbActConfig {
   billing_type?: "prepaid" | "credit_line" | "postpaid";
   spending_limit?: number;       // credit_line: spending limit dalam Rupiah
   billing_threshold?: number;    // postpaid: threshold sebelum ditagih
@@ -82,7 +82,7 @@ interface FbActConfig {
   [key: string]: unknown;
 }
 
-interface MetaBalanceData {
+export interface MetaBalanceData {
   name?: string;
   balance?: string;
   amount_spent?: string;
@@ -116,7 +116,7 @@ interface CampaignInsight extends MetaInsightData {
   campaign_name?: string;
 }
 
-interface EffectiveBalance {
+export interface EffectiveBalance {
   balance: number;
   balanceType: string;
   spendingLimit: number | null;
@@ -182,13 +182,13 @@ async function metaGet(path: string, params: Record<string, string>, token: stri
   return json;
 }
 
-async function getMetaBalance(actId: string, token: string): Promise<MetaBalanceData> {
+export async function getMetaBalance(actId: string, token: string): Promise<MetaBalanceData> {
   return metaGet(actId, {
     fields: "balance,currency,name,amount_spent,spend_cap,funding_source_details",
   }, token);
 }
 
-async function getAccountInsights(actId: string, token: string, dateStr: string): Promise<MetaInsightData | null> {
+export async function getAccountInsights(actId: string, token: string, dateStr: string): Promise<MetaInsightData | null> {
   const data = await metaGet(`${actId}/insights`, {
     fields: "spend,impressions,reach,clicks,ctr,cpm,frequency,actions,action_values",
     time_range: JSON.stringify({ since: dateStr, until: dateStr }),
@@ -210,7 +210,7 @@ async function getCampaignInsights(actId: string, token: string, dateStr: string
 // Billing Logic
 // ─────────────────────────────────────────────
 
-function getEffectiveBalance(config: FbActConfig, balanceData: MetaBalanceData): EffectiveBalance {
+export function getEffectiveBalance(config: FbActConfig, balanceData: MetaBalanceData): EffectiveBalance {
   const spendCapRaw = parseInt(balanceData.spend_cap ?? "0", 10);
   const amountSpentRaw = parseInt(balanceData.amount_spent ?? "0", 10);
   const balanceRaw = parseInt(balanceData.balance ?? "0", 10);
@@ -247,7 +247,7 @@ function getEffectiveBalance(config: FbActConfig, balanceData: MetaBalanceData):
   return { balance: balanceRaw / 100, balanceType: "Prepaid", spendingLimit: null, outstandingBalance: null };
 }
 
-function getSaldoStatus(balance: number, balanceType: string): { emoji: string; warningMsg: string | null } {
+export function getSaldoStatus(balance: number, balanceType: string): { emoji: string; warningMsg: string | null } {
   if (balanceType === "Postpaid") {
     if (balance <= 0) return { emoji: "🔴", warningMsg: "🚨 <b>Tagihan sudah mencapai threshold!</b> Kartu akan segera ditagih otomatis." };
     if (balance < 500_000) return { emoji: "🔴", warningMsg: "🚨 <b>Ruang tagihan tinggal &lt; Rp 500.000!</b> Kartu akan segera ditagih otomatis." };

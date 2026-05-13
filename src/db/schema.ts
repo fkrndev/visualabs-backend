@@ -160,6 +160,7 @@ export const profiles = mysqlTable(
     name: varchar("name", { length: 150 }),
     email: varchar("email", { length: 191 }),
     phone: varchar("phone", { length: 32 }),
+    telegramUsername: varchar("telegram_username", { length: 64 }),
     dataJson: json("data_json").$type<JsonRecord>(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),

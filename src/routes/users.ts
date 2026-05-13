@@ -41,6 +41,7 @@ const userPayload = z.object({
   phone: z.string().min(6).optional(),
   password: z.string().min(8).optional(),
   name: z.string().min(1).optional(),
+  telegramUsername: z.string().trim().max(64).optional().nullable(),
   role: z.coerce.number().int().min(0).max(6).optional(),
 });
 
@@ -144,7 +145,7 @@ router.get('/:id', requireAuth, validateIdParam('id'), async (c) => {
 router.post('/', rateLimit({ windowMs: 60000, maxRequests: 20 }), requireAuth, zValidator('json', userPayload), async (c) => {
   const payload = c.req.valid('json');
 
-  const { email: rawEmail, username: rawUsername, phone: rawPhone, password, name, role } =
+  const { email: rawEmail, username: rawUsername, phone: rawPhone, password, name, telegramUsername, role } =
     payload;
 
   const email = rawEmail ? cleanEmail(rawEmail) : null;
@@ -212,6 +213,7 @@ router.post('/', rateLimit({ windowMs: 60000, maxRequests: 20 }), requireAuth, z
         name: profileName,
         email: rawEmail ?? null,
         phone: rawPhone ?? null,
+        telegramUsername: telegramUsername ?? null,
       });
 
       return insertId;
@@ -291,6 +293,9 @@ router.put('/:id', rateLimit({ windowMs: 60000, maxRequests: 50 }), requireAuth,
 
   if (payload.name !== undefined) {
     profileUpdates.name = payload.name ?? null;
+  }
+  if (payload.telegramUsername !== undefined) {
+    profileUpdates.telegramUsername = payload.telegramUsername ?? null;
   }
   if (payload.role !== undefined) sets.role = payload.role;
   if (payload.password) sets.password = await hashPassword(payload.password);

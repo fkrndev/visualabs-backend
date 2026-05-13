@@ -1,10 +1,11 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { zValidator } from '@hono/zod-validator';
-import { SQL, and, asc, desc, eq, like, or } from 'drizzle-orm';
+import { SQL, and, asc, desc, eq, inArray, like, or } from 'drizzle-orm';
 
 import { db } from '../db/client';
-import { fbAct, fbToken, customers, customerProfiles, subscriptions, users, profiles } from '../db/schema';
+import { fbAct, fbToken, fbActDailyData, customers, customerProfiles, subscriptions, users, profiles } from '../db/schema';
+import { syncFbActBalance } from '../jobs/syncFbActBalance';
 
 const router = new Hono();
 
@@ -127,6 +128,60 @@ router.get('/', zValidator('query', paginationQuery), async (c) => {
     data: items,
     page: { limit, lastId, hasNext, sortBy: sortKey, sortOrder },
   });
+});
+
+// Dashboard: list semua fb_act dengan latest daily data (balance, status, dll)
+router.get('/dashboard', async (c) => {
+  const acts = await buildSelectQuery().orderBy(asc(fbAct.id));
+  const items = acts.map(formatRow);
+
+  if (items.length === 0) {
+    return c.json({ success: true, data: [] });
+  }
+
+  // Ambil latest daily data per fb_act_id (pakai subquery max date)
+  const fbActIds = items.map((i: any) => i.id).filter((id: number | null) => id != null);
+
+  if (fbActIds.length === 0) {
+    return c.json({ success: true, data: items.map((i: any) => ({ ...i, latestDaily: null })) });
+  }
+
+  // Ambil semua daily data lalu pick latest per fbActId di JS (lebih simpel)
+  const dailyRows = await db
+    .select()
+    .from(fbActDailyData)
+    .where(inArray(fbActDailyData.fbActId, fbActIds as number[]))
+    .orderBy(desc(fbActDailyData.date), desc(fbActDailyData.id));
+
+  const latestByFbActId = new Map<number, typeof dailyRows[number]>();
+  for (const row of dailyRows) {
+    if (row.fbActId == null) continue;
+    if (!latestByFbActId.has(row.fbActId)) {
+      latestByFbActId.set(row.fbActId, row);
+    }
+  }
+
+  const enriched = items.map((item: any) => ({
+    ...item,
+    latestDaily: latestByFbActId.get(item.id) ?? null,
+    isActive: !!(item.token && item.token.status === 1),
+  }));
+
+  return c.json({ success: true, data: enriched });
+});
+
+// Sync balance on-demand untuk 1 fb_act
+router.post('/:id/sync-balance', async (c) => {
+  const id = Number(c.req.param('id'));
+  if (Number.isNaN(id)) {
+    return c.json({ success: false, message: 'ID tidak valid' }, 400);
+  }
+
+  const result = await syncFbActBalance(id);
+  if (!result.success) {
+    return c.json(result, 400);
+  }
+  return c.json(result);
 });
 
 router.get('/:id', async (c) => {
