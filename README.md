@@ -8,4 +8,5 @@ To run:
 bun run dev
 ```
 
-open http://localhost:3001
+
+pm2 start ecosystem.config.cjs

@@ -4,7 +4,7 @@ import { zValidator } from '@hono/zod-validator';
 import { SQL, and, asc, desc, eq, like, sql } from 'drizzle-orm';
 
 import { db } from '../db/client';
-import { chromeHistories, chromeProfiles } from '../db/schema';
+import { chromeHistories, chromeProfiles, chromeVisitEvents } from '../db/schema';
 
 const router = new Hono();
 
@@ -21,11 +21,12 @@ const trackPayload = z.object({
   browserUuid: z.string().min(1),
   url: z.string().url().min(1),
   title: z.string().optional(),
+  durationMs: z.coerce.number().int().min(0).optional(),
 });
 
 // POST /track — dipanggil extension setiap URL berubah
 router.post('/track', zValidator('json', trackPayload), async (c) => {
-  const { browserUuid, url, title } = c.req.valid('json');
+  const { browserUuid, url, title, durationMs } = c.req.valid('json');
 
   // Cari chrome profile berdasarkan browser UUID
   const profileRows = await db
@@ -64,6 +65,15 @@ router.post('/track', zValidator('json', trackPayload), async (c) => {
       })
       .where(eq(chromeHistories.id, existing.id));
 
+    await db.insert(chromeVisitEvents).values({
+      historyId: existing.id,
+      userId: profile.userId,
+      customerId: profile.customerId ?? null,
+      visitedAt: new Date(),
+      durationMs: durationMs ?? null,
+      dataJson: title ? { title } : null,
+    });
+
     return c.json({ success: true, action: 'incremented', id: existing.id });
   }
 
@@ -77,7 +87,17 @@ router.post('/track', zValidator('json', trackPayload), async (c) => {
     dataJson: title ? { title } : null,
   });
 
-  return c.json({ success: true, action: 'created', id: Number(insertResult.insertId) }, 201);
+  const historyId = Number(insertResult.insertId);
+  await db.insert(chromeVisitEvents).values({
+    historyId,
+    userId: profile.userId,
+    customerId: profile.customerId ?? null,
+    visitedAt: new Date(),
+    durationMs: durationMs ?? null,
+    dataJson: title ? { title } : null,
+  });
+
+  return c.json({ success: true, action: 'created', id: historyId }, 201);
 });
 
 // GET / — list histories

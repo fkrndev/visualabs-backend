@@ -27,6 +27,7 @@ import todoRoutes from "./routes/todos";
 import fbActRoutes from "./routes/fbAct";
 import fbTokenRoutes from "./routes/fbToken";
 import marketingDashboardRoutes from "./routes/marketingDashboard";
+import teamInsightsRoutes from "./routes/teamInsights";
 import openApiSpec from "./openapi/spec";
 import { role } from "./utils/auth/role";
 // import { readFileSync } from "fs";
@@ -100,6 +101,7 @@ app.route("/todos", todoRoutes);
 app.route("/fb-act", fbActRoutes);
 app.route("/fb-token", fbTokenRoutes);
 app.route("/marketing-dashboard", marketingDashboardRoutes);
+app.route("/team-insights", teamInsightsRoutes);
 
 app.notFound((c) => {
   return c.json(

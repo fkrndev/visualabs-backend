@@ -254,6 +254,31 @@ export const chromeHistories = mysqlTable(
   ],
 );
 
+export const chromeVisitEvents = mysqlTable(
+  "chrome_visit_events",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    historyId: int("history_id")
+      .notNull()
+      .references(() => chromeHistories.id, { onDelete: "cascade" }),
+    userId: int("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    customerId: int("customer_id")
+      .references(() => customers.id, { onDelete: "set null" }),
+    visitedAt: timestamp("visited_at").notNull(),
+    durationMs: int("duration_ms"),
+    dataJson: json("data_json").$type<JsonRecord>(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    index("chrome_visit_events_user_visited_idx").on(table.userId, table.visitedAt),
+    index("chrome_visit_events_history_idx").on(table.historyId),
+    index("chrome_visit_events_customer_idx").on(table.customerId),
+    index("chrome_visit_events_visited_at_idx").on(table.visitedAt),
+  ],
+);
+
 export const chromeHtmls = mysqlTable(
   "chrome_htmls",
   {
