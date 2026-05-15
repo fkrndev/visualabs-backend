@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { zValidator } from '@hono/zod-validator';
-import { and, desc, eq, gte, inArray, lte, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, like, lte, or, sql } from 'drizzle-orm';
 
 import { db } from '../db/client';
 import {
@@ -198,9 +198,15 @@ async function scopeFbActWhere(
 router.use('*', requireAuth);
 
 // ───────────────────────── /customers (scope dropdown) ─────────────────────────
-router.get('/customers', async (c) => {
+const dropdownQuery = z.object({
+  q: z.string().trim().optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(25),
+});
+
+router.get('/customers', zValidator('query', dropdownQuery), async (c) => {
   const scope = await resolveScope(c);
   if ('error' in scope) return scope.error;
+  const { q, limit } = c.req.valid('query');
 
   const conds: any[] = [];
   if (scope.kind === 'advertiser') {
@@ -208,6 +214,10 @@ router.get('/customers', async (c) => {
       return c.json({ success: true, data: [] });
     }
     conds.push(inArray(customers.id, scope.customerIds));
+  }
+  if (q) {
+    const pat = `%${q}%`;
+    conds.push(or(like(customerProfiles.name, pat), like(customers.email, pat)));
   }
 
   const rows = await db
@@ -219,7 +229,8 @@ router.get('/customers', async (c) => {
     .from(customers)
     .leftJoin(customerProfiles, eq(customerProfiles.customerId, customers.id))
     .where(conds.length ? and(...conds) : sql`1=1`)
-    .groupBy(customers.id, customerProfiles.name, customers.email);
+    .groupBy(customers.id, customerProfiles.name, customers.email)
+    .limit(limit);
 
   return c.json({
     success: true,
@@ -231,12 +242,20 @@ router.get('/customers', async (c) => {
 });
 
 // ───────────────────────── /advertisers (admin only) ─────────────────────────
-router.get('/advertisers', async (c) => {
+router.get('/advertisers', zValidator('query', dropdownQuery), async (c) => {
   const scope = await resolveScope(c);
   if ('error' in scope) return scope.error;
   if (scope.kind !== 'admin') {
     return c.json({ success: false, message: 'Forbidden — admin only' }, 403);
   }
+  const { q, limit } = c.req.valid('query');
+
+  const conds: any[] = [];
+  if (q) {
+    const pat = `%${q}%`;
+    conds.push(or(like(profiles.name, pat), like(users.email, pat)));
+  }
+
   const rows = await db
     .select({
       id: users.id,
@@ -246,7 +265,9 @@ router.get('/advertisers', async (c) => {
     .from(subscriptions)
     .innerJoin(users, eq(users.id, subscriptions.advertiserId))
     .leftJoin(profiles, eq(profiles.userId, users.id))
-    .groupBy(users.id, users.email, profiles.name);
+    .where(conds.length ? and(...conds) : sql`1=1`)
+    .groupBy(users.id, users.email, profiles.name)
+    .limit(limit);
 
   return c.json({
     success: true,

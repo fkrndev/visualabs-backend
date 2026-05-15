@@ -4,7 +4,14 @@ import { zValidator } from '@hono/zod-validator';
 import { SQL, and, asc, desc, eq, like, sql } from 'drizzle-orm';
 
 import { db } from '../db/client';
-import { chromeHistories, chromeProfiles, chromeVisitEvents } from '../db/schema';
+import { chromeHistories, chromeProfiles, chromeVisitEvents, users, customers } from '../db/schema';
+import {
+  buildOrderBy,
+  buildWhere,
+  filtersQuerySchema,
+  sortsQuerySchema,
+  type ColumnMap,
+} from '../utils/queryFilters';
 
 const router = new Hono();
 
@@ -15,7 +22,20 @@ const paginationQuery = z.object({
   q: z.string().trim().optional(),
   sortBy: z.enum(['id', 'url', 'count', 'createdAt', 'updatedAt']).optional(),
   sortOrder: z.enum(['asc', 'desc']).optional(),
+  filters: filtersQuerySchema,
+  sort: sortsQuerySchema,
 });
+
+const historyColumnMap: ColumnMap = {
+  id: { column: chromeHistories.id, kind: 'id' },
+  userId: { column: chromeHistories.userId, kind: 'id' },
+  customerId: { column: chromeHistories.customerId, kind: 'id' },
+  profileId: { column: chromeHistories.profileId, kind: 'id' },
+  url: { column: chromeHistories.url, kind: 'text' },
+  count: { column: chromeHistories.count, kind: 'number' },
+  createdAt: { column: chromeHistories.createdAt, kind: 'date' },
+  updatedAt: { column: chromeHistories.updatedAt, kind: 'date' },
+};
 
 const trackPayload = z.object({
   browserUuid: z.string().min(1),
@@ -102,34 +122,68 @@ router.post('/track', zValidator('json', trackPayload), async (c) => {
 
 // GET / — list histories
 router.get('/', zValidator('query', paginationQuery), async (c) => {
-  const { page, limit, profileId, q, sortBy: sortByParam, sortOrder: sortOrderParam } =
-    c.req.valid('query');
+  const {
+    page,
+    limit,
+    profileId,
+    q,
+    sortBy: sortByParam,
+    sortOrder: sortOrderParam,
+    filters: filterGroup,
+    sort: sortRules,
+  } = c.req.valid('query');
 
   const offset = (page - 1) * limit;
-  const filters = [] as any[];
+  const conds: SQL[] = [];
 
-  if (profileId) filters.push(eq(chromeHistories.profileId, profileId));
-  if (q) filters.push(like(chromeHistories.url, `%${q}%`));
+  if (profileId) conds.push(eq(chromeHistories.profileId, profileId));
+  if (q) conds.push(like(chromeHistories.url, `%${q}%`));
+  const advancedWhere = buildWhere(filterGroup, historyColumnMap);
+  if (advancedWhere) conds.push(advancedWhere);
 
-  const whereExpr = filters.length ? and(...filters) : undefined;
+  const whereExpr = conds.length ? and(...conds) : undefined;
 
-  const sortMap = {
-    id: chromeHistories.id,
-    url: chromeHistories.url,
-    count: chromeHistories.count,
-    createdAt: chromeHistories.createdAt,
-    updatedAt: chromeHistories.updatedAt,
-  } as const;
+  const legacySortKey =
+    sortByParam && sortByParam in historyColumnMap ? sortByParam : 'id';
+  const legacyDir: 'asc' | 'desc' = sortOrderParam === 'desc' ? 'desc' : 'asc';
+  const legacyFallback = buildOrderBy(
+    [{ field: legacySortKey, direction: legacyDir }],
+    historyColumnMap,
+  );
+  if (legacySortKey !== 'id') legacyFallback.push(asc(chromeHistories.id));
 
-  const isValidSortKey = (key: string): key is keyof typeof sortMap => key in sortMap;
-  const sortKey = sortByParam && isValidSortKey(sortByParam) ? sortByParam : 'id';
-  const sortColumn = sortMap[sortKey];
-  const sortOrder = sortOrderParam === 'desc' ? 'desc' : 'asc';
+  const orders = buildOrderBy(sortRules, historyColumnMap, legacyFallback);
+  if (sortRules && sortRules.length > 0) orders.push(asc(chromeHistories.id));
 
-  const orders: SQL[] = [sortOrder === 'desc' ? desc(sortColumn) : asc(sortColumn)];
-  if (sortKey !== 'id') orders.push(asc(sortMap.id));
+  const responseSortKey =
+    sortRules && sortRules.length > 0 ? sortRules[0].field : legacySortKey;
+  const responseSortOrder =
+    sortRules && sortRules.length > 0 ? sortRules[0].direction : legacyDir;
 
-  const query = db.select().from(chromeHistories).orderBy(...orders).limit(limit).offset(offset);
+  const query = db
+    .select({
+      id: chromeHistories.id,
+      userId: chromeHistories.userId,
+      customerId: chromeHistories.customerId,
+      profileId: chromeHistories.profileId,
+      url: chromeHistories.url,
+      count: chromeHistories.count,
+      dataJson: chromeHistories.dataJson,
+      createdAt: chromeHistories.createdAt,
+      updatedAt: chromeHistories.updatedAt,
+      userName: users.username,
+      userEmail: users.email,
+      customerUsername: customers.username,
+      customerEmail: customers.email,
+      profileName: chromeProfiles.name
+    })
+    .from(chromeHistories)
+    .leftJoin(users, eq(chromeHistories.userId, users.id))
+    .leftJoin(customers, eq(chromeHistories.customerId, customers.id))
+    .leftJoin(chromeProfiles, eq(chromeHistories.profileId, chromeProfiles.id))
+    .orderBy(...orders)
+    .limit(limit)
+    .offset(offset);
   if (whereExpr) query.where(whereExpr);
 
   const items = await query;
@@ -139,7 +193,7 @@ router.get('/', zValidator('query', paginationQuery), async (c) => {
   return c.json({
     success: true,
     data: items,
-    page: { limit, lastId, hasNext, sortBy: sortKey, sortOrder },
+    page: { limit, lastId, hasNext, sortBy: responseSortKey, sortOrder: responseSortOrder },
   });
 });
 
