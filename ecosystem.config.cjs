@@ -7,6 +7,7 @@ module.exports = {
       env: {
         NODE_ENV: "production",
         PORT: 2024,
+        TZ: "Asia/Jakarta",
       },
       watch: false,
       max_memory_restart: "512M",
