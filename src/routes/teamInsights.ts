@@ -39,11 +39,24 @@ const rangeQuery = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional(),
 });
 
+const JAKARTA_OFFSET = "+07:00";
+
+function parseDateParam(value: string, endOfDay = false) {
+  // Date-only strings (YYYY-MM-DD) are anchored to Asia/Jakarta.
+  // Full ISO strings with time/offset are honored as-is.
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return new Date(
+      `${value}T${endOfDay ? "23:59:59.999" : "00:00:00.000"}${JAKARTA_OFFSET}`,
+    );
+  }
+  return new Date(value);
+}
+
 function resolveRange(from?: string, to?: string) {
   const now = new Date();
-  const toDate = to ? new Date(to) : now;
+  const toDate = to ? parseDateParam(to, true) : now;
   const fromDate = from
-    ? new Date(from)
+    ? parseDateParam(from, false)
     : new Date(toDate.getTime() - 90 * 24 * 60 * 60 * 1000);
   return { fromDate, toDate };
 }
