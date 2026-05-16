@@ -126,6 +126,18 @@ const accountsQuery = z.object({
   pageSize: z.coerce.number().int().min(1).max(200).default(50),
 });
 
+function stripHtml(input: string | null): string | null {
+  if (input == null) return null;
+  return input
+    .replace(/<[^>]*>/g, "")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+}
+
 function todayWibStr(): string {
   // WIB = UTC+7
   const nowUtc = Date.now();
@@ -495,7 +507,7 @@ router.get('/accounts', zValidator('query', accountsQuery), async (c) => {
       spendingLimit: d?.spendingLimit != null ? Number(d.spendingLimit) : null,
       outstandingBalance: d?.outstandingBalance != null ? Number(d.outstandingBalance) : null,
       statusLevel: level == null ? null : Number(level),
-      warningMessage: warningMsg,
+      warningMessage: stripHtml(warningMsg),
       spend: d?.spend != null ? Number(d.spend) : null,
       impressions: d?.impressions ?? null,
       reach: d?.reach ?? null,
@@ -566,7 +578,7 @@ router.get('/alerts', async (c) => {
         balanceType: d.balanceType,
         effectiveBalance: d.effectiveBalance != null ? Number(d.effectiveBalance) : null,
         statusLevel: level == null ? null : Number(level),
-        warningMessage: msg,
+        warningMessage: stripHtml(msg),
         date: d.date,
       };
     })
