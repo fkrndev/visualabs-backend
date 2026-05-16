@@ -7,6 +7,7 @@ import { db } from '../db/client';
 import {
   chromeVisitEvents,
   chromeHistories,
+  chromeProfiles,
   users,
   profiles,
   customerProfiles,
@@ -38,6 +39,59 @@ const rangeQuery = z.object({
   userId: z.coerce.number().int().optional(),
   limit: z.coerce.number().int().min(1).max(100).optional(),
 });
+
+const accessQuery = rangeQuery.extend({
+  granularity: z.enum(['hour', 'day', 'week']).optional(),
+});
+
+type Granularity = 'hour' | 'day' | 'week';
+
+function bucketSqlFragment(grain: Granularity): string {
+  switch (grain) {
+    case 'hour':
+      return "DATE_FORMAT(visited_at, '%Y-%m-%d %H:00:00')";
+    case 'week':
+      return 'DATE(DATE_SUB(visited_at, INTERVAL WEEKDAY(visited_at) DAY))';
+    case 'day':
+    default:
+      return 'DATE(visited_at)';
+  }
+}
+
+type TrendRow = {
+  seriesId: number;
+  bucket: string;
+  visits: number;
+};
+
+type RankingItem = {
+  id: number;
+  label: string;
+  visits: number;
+  uniqueUsers?: number;
+  peakBucket: string | null;
+  peakBucketVisits: number;
+  lastActive: string | null;
+};
+
+function computePeaks(trend: TrendRow[]): Map<number, { bucket: string; visits: number }> {
+  const peak = new Map<number, { bucket: string; visits: number }>();
+  for (const row of trend) {
+    const cur = peak.get(row.seriesId);
+    if (!cur || row.visits > cur.visits) {
+      peak.set(row.seriesId, { bucket: row.bucket, visits: row.visits });
+    }
+  }
+  return peak;
+}
+
+function bucketToIso(bucket: string | Date): string {
+  if (bucket instanceof Date) return bucket.toISOString();
+  // MySQL returns strings like "2026-05-16" or "2026-05-16 14:00:00"
+  const s = String(bucket);
+  const hasTime = s.includes(' ') || s.includes('T');
+  return new Date(`${s.replace(' ', 'T')}${hasTime ? '' : 'T00:00:00'}+07:00`).toISOString();
+}
 
 const JAKARTA_OFFSET = "+07:00";
 
@@ -426,6 +480,228 @@ router.get('/members/:userId', async (c) => {
         email: r.email,
         sharedCustomers: Number(r.shared_customers),
       })),
+    },
+  });
+});
+
+// ─── Access Analytics ─────────────────────────────────────────────────────
+// 3 endpoints: per-user / per-customer / per-profile access trend + ranking.
+// Each returns { trend: [...], ranking: [...] } with peakBucket per series.
+
+// GET /access/users
+router.get('/access/users', zValidator('query', accessQuery), async (c) => {
+  const { from, to, customerId, limit = 10, granularity = 'day' } = c.req.valid('query');
+  const { fromDate, toDate } = resolveRange(from, to);
+  const grainSql = bucketSqlFragment(granularity);
+  const customerFilter = customerId ? sql`AND customer_id = ${customerId}` : sql``;
+
+  const rankingRaw: any = await db.execute(sql`
+    SELECT e.user_id AS id,
+      COALESCE(p.name, u.email) AS label,
+      COUNT(*) AS visits,
+      MAX(e.visited_at) AS last_active
+    FROM chrome_visit_events e
+    JOIN users u ON u.id = e.user_id
+    LEFT JOIN profiles p ON p.user_id = u.id
+    WHERE e.visited_at >= ${fromDate} AND e.visited_at <= ${toDate}
+      ${customerId ? sql`AND e.customer_id = ${customerId}` : sql``}
+    GROUP BY e.user_id, p.name, u.email
+    ORDER BY visits DESC
+    LIMIT ${limit}
+  `);
+  const rankingRows = ((rankingRaw as any)[0] ?? rankingRaw) as any[];
+  const topIds = rankingRows.map((r) => Number(r.id));
+
+  let trendRows: any[] = [];
+  if (topIds.length) {
+    const trendRaw: any = await db.execute(sql`
+      SELECT user_id AS seriesId,
+        ${sql.raw(grainSql)} AS bucket,
+        COUNT(*) AS visits
+      FROM chrome_visit_events
+      WHERE visited_at >= ${fromDate} AND visited_at <= ${toDate}
+        AND user_id IN (${sql.join(topIds.map((i) => sql`${i}`), sql`, `)})
+        ${customerFilter}
+      GROUP BY user_id, bucket
+      ORDER BY bucket ASC
+    `);
+    trendRows = (trendRaw as any)[0] ?? trendRaw;
+  }
+
+  const trend: TrendRow[] = trendRows.map((r: any) => ({
+    seriesId: Number(r.seriesId ?? r.series_id ?? r.user_id),
+    bucket: bucketToIso(r.bucket),
+    visits: Number(r.visits),
+  }));
+  const peaks = computePeaks(trend);
+
+  const ranking: RankingItem[] = rankingRows.map((r) => {
+    const p = peaks.get(Number(r.id));
+    return {
+      id: Number(r.id),
+      label: r.label ?? `User #${r.id}`,
+      visits: Number(r.visits),
+      peakBucket: p?.bucket ?? null,
+      peakBucketVisits: p?.visits ?? 0,
+      lastActive: r.last_active ? new Date(r.last_active).toISOString() : null,
+    };
+  });
+
+  return c.json({
+    success: true,
+    data: {
+      range: { from: fromDate.toISOString(), to: toDate.toISOString() },
+      granularity,
+      trend,
+      ranking,
+    },
+  });
+});
+
+// GET /access/customers
+router.get('/access/customers', zValidator('query', accessQuery), async (c) => {
+  const { from, to, limit = 10, granularity = 'day' } = c.req.valid('query');
+  const { fromDate, toDate } = resolveRange(from, to);
+  const grainSql = bucketSqlFragment(granularity);
+
+  const rankingRaw: any = await db.execute(sql`
+    SELECT e.customer_id AS id,
+      COALESCE(cp.name, CONCAT('Customer #', e.customer_id)) AS label,
+      COUNT(*) AS visits,
+      COUNT(DISTINCT e.user_id) AS unique_users,
+      MAX(e.visited_at) AS last_active
+    FROM chrome_visit_events e
+    LEFT JOIN customer_profiles cp ON cp.customer_id = e.customer_id
+    WHERE e.visited_at >= ${fromDate} AND e.visited_at <= ${toDate}
+      AND e.customer_id IS NOT NULL
+    GROUP BY e.customer_id, cp.name
+    ORDER BY visits DESC
+    LIMIT ${limit}
+  `);
+  const rankingRows = ((rankingRaw as any)[0] ?? rankingRaw) as any[];
+  const topIds = rankingRows.map((r) => Number(r.id));
+
+  let trendRows: any[] = [];
+  if (topIds.length) {
+    const trendRaw: any = await db.execute(sql`
+      SELECT customer_id AS seriesId,
+        ${sql.raw(grainSql)} AS bucket,
+        COUNT(*) AS visits
+      FROM chrome_visit_events
+      WHERE visited_at >= ${fromDate} AND visited_at <= ${toDate}
+        AND customer_id IN (${sql.join(topIds.map((i) => sql`${i}`), sql`, `)})
+      GROUP BY customer_id, bucket
+      ORDER BY bucket ASC
+    `);
+    trendRows = (trendRaw as any)[0] ?? trendRaw;
+  }
+
+  const trend: TrendRow[] = trendRows.map((r: any) => ({
+    seriesId: Number(r.seriesId ?? r.customer_id),
+    bucket: bucketToIso(r.bucket),
+    visits: Number(r.visits),
+  }));
+  const peaks = computePeaks(trend);
+
+  const ranking: RankingItem[] = rankingRows.map((r) => {
+    const p = peaks.get(Number(r.id));
+    return {
+      id: Number(r.id),
+      label: r.label,
+      visits: Number(r.visits),
+      uniqueUsers: Number(r.unique_users),
+      peakBucket: p?.bucket ?? null,
+      peakBucketVisits: p?.visits ?? 0,
+      lastActive: r.last_active ? new Date(r.last_active).toISOString() : null,
+    };
+  });
+
+  return c.json({
+    success: true,
+    data: {
+      range: { from: fromDate.toISOString(), to: toDate.toISOString() },
+      granularity,
+      trend,
+      ranking,
+    },
+  });
+});
+
+// GET /access/profiles
+router.get('/access/profiles', zValidator('query', accessQuery), async (c) => {
+  const { from, to, customerId, limit = 10, granularity = 'day' } = c.req.valid('query');
+  const { fromDate, toDate } = resolveRange(from, to);
+  const grainSql = bucketSqlFragment(granularity).replaceAll('visited_at', 'e.visited_at');
+
+  const rankingRaw: any = await db.execute(sql`
+    SELECT h.profile_id AS id,
+      cp.name AS profile_name,
+      COALESCE(up.name, ou.email) AS owner_label,
+      cust.name AS customer_label,
+      COUNT(*) AS visits,
+      COUNT(DISTINCT e.user_id) AS unique_users,
+      MAX(e.visited_at) AS last_active
+    FROM chrome_visit_events e
+    JOIN chrome_histories h ON h.id = e.history_id
+    JOIN chrome_profiles cp ON cp.id = h.profile_id
+    LEFT JOIN users ou ON ou.id = cp.user_id
+    LEFT JOIN profiles up ON up.user_id = cp.user_id
+    LEFT JOIN customer_profiles cust ON cust.customer_id = cp.customer_id
+    WHERE e.visited_at >= ${fromDate} AND e.visited_at <= ${toDate}
+      ${customerId ? sql`AND e.customer_id = ${customerId}` : sql``}
+    GROUP BY h.profile_id, cp.name, up.name, ou.email, cust.name
+    ORDER BY visits DESC
+    LIMIT ${limit}
+  `);
+  const rankingRows = ((rankingRaw as any)[0] ?? rankingRaw) as any[];
+  const topIds = rankingRows.map((r) => Number(r.id));
+
+  let trendRows: any[] = [];
+  if (topIds.length) {
+    const trendRaw: any = await db.execute(sql`
+      SELECT h.profile_id AS seriesId,
+        ${sql.raw(grainSql)} AS bucket,
+        COUNT(*) AS visits
+      FROM chrome_visit_events e
+      JOIN chrome_histories h ON h.id = e.history_id
+      WHERE e.visited_at >= ${fromDate} AND e.visited_at <= ${toDate}
+        AND h.profile_id IN (${sql.join(topIds.map((i) => sql`${i}`), sql`, `)})
+        ${customerId ? sql`AND e.customer_id = ${customerId}` : sql``}
+      GROUP BY h.profile_id, bucket
+      ORDER BY bucket ASC
+    `);
+    trendRows = (trendRaw as any)[0] ?? trendRaw;
+  }
+
+  const trend: TrendRow[] = trendRows.map((r: any) => ({
+    seriesId: Number(r.seriesId ?? r.profile_id),
+    bucket: bucketToIso(r.bucket),
+    visits: Number(r.visits),
+  }));
+  const peaks = computePeaks(trend);
+
+  const ranking = rankingRows.map((r) => {
+    const p = peaks.get(Number(r.id));
+    return {
+      id: Number(r.id),
+      label: r.profile_name ?? `Profile #${r.id}`,
+      ownerLabel: r.owner_label ?? null,
+      customerLabel: r.customer_label ?? null,
+      visits: Number(r.visits),
+      uniqueUsers: Number(r.unique_users),
+      peakBucket: p?.bucket ?? null,
+      peakBucketVisits: p?.visits ?? 0,
+      lastActive: r.last_active ? new Date(r.last_active).toISOString() : null,
+    };
+  });
+
+  return c.json({
+    success: true,
+    data: {
+      range: { from: fromDate.toISOString(), to: toDate.toISOString() },
+      granularity,
+      trend,
+      ranking,
     },
   });
 });
