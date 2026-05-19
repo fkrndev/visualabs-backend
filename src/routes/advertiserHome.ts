@@ -83,10 +83,32 @@ async function loadAdvertiserContext(advertiserUserId: number) {
   return { subs, subscriptionIds, customerIds };
 }
 
+/**
+ * Narrow scope to a single customer. Returns null if the customer is not in
+ * the advertiser's scope (so caller can return 404).
+ */
+function scopeForCustomer(
+  ctx: { subs: Array<{ id: number; customerId: number }>; subscriptionIds: number[]; customerIds: number[] },
+  customerId: number,
+) {
+  if (!ctx.customerIds.includes(customerId)) return null;
+  const subs = ctx.subs.filter((s) => s.customerId === customerId);
+  return {
+    subs,
+    subscriptionIds: subs.map((s) => s.id),
+    customerIds: [customerId],
+  };
+}
+
 // ───────────────────────── /summary ─────────────────────────
 
 const summaryQuery = z.object({
   asUser: z.coerce.number().int().optional(),
+});
+
+const scopedQuery = z.object({
+  asUser: z.coerce.number().int().optional(),
+  customerId: z.coerce.number().int().optional(),
 });
 
 router.get("/summary", zValidator("query", summaryQuery), async (c) => {
@@ -292,6 +314,7 @@ router.get("/summary", zValidator("query", summaryQuery), async (c) => {
 
 const attentionQuery = z.object({
   asUser: z.coerce.number().int().optional(),
+  customerId: z.coerce.number().int().optional(),
   limit: z.coerce.number().int().min(1).max(50).default(10),
 });
 
@@ -316,11 +339,19 @@ type AttentionItem = {
 router.get("/attention", zValidator("query", attentionQuery), async (c) => {
   const r = await resolveAdvertiserScope(c);
   if (!r.ok) return r.response;
-  const { asUser, limit } = c.req.valid("query");
+  const { asUser, limit, customerId } = c.req.valid("query");
   const advertiserUserId = effectiveAdvertiserUserId(r.scope, asUser);
 
-  const { subs, subscriptionIds, customerIds } =
-    await loadAdvertiserContext(advertiserUserId);
+  const fullCtx = await loadAdvertiserContext(advertiserUserId);
+  let ctx = fullCtx;
+  if (customerId != null) {
+    const narrowed = scopeForCustomer(fullCtx, customerId);
+    if (!narrowed) {
+      return c.json({ success: true, data: { items: [] } });
+    }
+    ctx = { ...fullCtx, ...narrowed };
+  }
+  const { subs, subscriptionIds, customerIds } = ctx;
 
   if (subscriptionIds.length === 0) {
     return c.json({ success: true, data: { items: [] } });
@@ -691,12 +722,20 @@ router.get("/clients", zValidator("query", clientsQuery), async (c) => {
 
 // ───────────────────────── /activity ─────────────────────────
 
-router.get("/activity", zValidator("query", summaryQuery), async (c) => {
+router.get("/activity", zValidator("query", scopedQuery), async (c) => {
   const r = await resolveAdvertiserScope(c);
   if (!r.ok) return r.response;
-  const { asUser } = c.req.valid("query");
+  const { asUser, customerId } = c.req.valid("query");
   const advertiserUserId = effectiveAdvertiserUserId(r.scope, asUser);
-  const { subscriptionIds } = await loadAdvertiserContext(advertiserUserId);
+  const fullCtx = await loadAdvertiserContext(advertiserUserId);
+  let subscriptionIds = fullCtx.subscriptionIds;
+  if (customerId != null) {
+    const narrowed = scopeForCustomer(fullCtx, customerId);
+    if (!narrowed) {
+      return c.json({ success: true, data: { tickets: [], todos: [] } });
+    }
+    subscriptionIds = narrowed.subscriptionIds;
+  }
 
   if (subscriptionIds.length === 0) {
     return c.json({ success: true, data: { tickets: [], todos: [] } });
@@ -762,12 +801,20 @@ router.get("/activity", zValidator("query", summaryQuery), async (c) => {
 
 // ───────────────────────── /ads-overview ─────────────────────────
 
-router.get("/ads-overview", zValidator("query", summaryQuery), async (c) => {
+router.get("/ads-overview", zValidator("query", scopedQuery), async (c) => {
   const r = await resolveAdvertiserScope(c);
   if (!r.ok) return r.response;
-  const { asUser } = c.req.valid("query");
+  const { asUser, customerId } = c.req.valid("query");
   const advertiserUserId = effectiveAdvertiserUserId(r.scope, asUser);
-  const { subscriptionIds, customerIds } = await loadAdvertiserContext(advertiserUserId);
+  const fullCtx = await loadAdvertiserContext(advertiserUserId);
+  let subscriptionIds = fullCtx.subscriptionIds;
+  if (customerId != null) {
+    const narrowed = scopeForCustomer(fullCtx, customerId);
+    if (!narrowed) {
+      return c.json({ success: true, data: { customers: [] } });
+    }
+    subscriptionIds = narrowed.subscriptionIds;
+  }
 
   if (subscriptionIds.length === 0) {
     return c.json({ success: true, data: { customers: [] } });
@@ -872,12 +919,20 @@ router.get("/ads-overview", zValidator("query", summaryQuery), async (c) => {
 // current-period entry (scorecardData.status = 1). Grouped per customer so the
 // UI can render a "KPI per Client" table.
 
-router.get("/scorecards-summary", zValidator("query", summaryQuery), async (c) => {
+router.get("/scorecards-summary", zValidator("query", scopedQuery), async (c) => {
   const r = await resolveAdvertiserScope(c);
   if (!r.ok) return r.response;
-  const { asUser } = c.req.valid("query");
+  const { asUser, customerId } = c.req.valid("query");
   const advertiserUserId = effectiveAdvertiserUserId(r.scope, asUser);
-  const { subscriptionIds } = await loadAdvertiserContext(advertiserUserId);
+  const fullCtx = await loadAdvertiserContext(advertiserUserId);
+  let subscriptionIds = fullCtx.subscriptionIds;
+  if (customerId != null) {
+    const narrowed = scopeForCustomer(fullCtx, customerId);
+    if (!narrowed) {
+      return c.json({ success: true, data: { customers: [] } });
+    }
+    subscriptionIds = narrowed.subscriptionIds;
+  }
 
   if (subscriptionIds.length === 0) {
     return c.json({ success: true, data: { customers: [] } });
@@ -1040,12 +1095,20 @@ router.get("/scorecards-summary", zValidator("query", summaryQuery), async (c) =
 
 // ───────────────────────── /schedule ─────────────────────────
 
-router.get("/schedule", zValidator("query", summaryQuery), async (c) => {
+router.get("/schedule", zValidator("query", scopedQuery), async (c) => {
   const r = await resolveAdvertiserScope(c);
   if (!r.ok) return r.response;
-  const { asUser } = c.req.valid("query");
+  const { asUser, customerId } = c.req.valid("query");
   const advertiserUserId = effectiveAdvertiserUserId(r.scope, asUser);
-  const { subscriptionIds } = await loadAdvertiserContext(advertiserUserId);
+  const fullCtx = await loadAdvertiserContext(advertiserUserId);
+  let subscriptionIds = fullCtx.subscriptionIds;
+  if (customerId != null) {
+    const narrowed = scopeForCustomer(fullCtx, customerId);
+    if (!narrowed) {
+      return c.json({ success: true, data: { upcoming: [] } });
+    }
+    subscriptionIds = narrowed.subscriptionIds;
+  }
 
   if (subscriptionIds.length === 0) {
     return c.json({ success: true, data: { upcoming: [] } });
@@ -1080,5 +1143,355 @@ router.get("/schedule", zValidator("query", summaryQuery), async (c) => {
 
   return c.json({ success: true, data: { upcoming: rows } });
 });
+
+// ───────────────────────── /client/:customerId ─────────────────────────
+//
+// One-screen drilldown for a single client in the advertiser's scope.
+// Returns customer profile, subscriptions, stat cards, and attention items
+// scoped to that customer only.
+
+const clientParam = z.object({
+  customerId: z.coerce.number().int(),
+});
+
+router.get(
+  "/client/:customerId",
+  zValidator("param", clientParam),
+  zValidator("query", summaryQuery),
+  async (c) => {
+    const r = await resolveAdvertiserScope(c);
+    if (!r.ok) return r.response;
+    const { asUser } = c.req.valid("query");
+    const { customerId } = c.req.valid("param");
+    const advertiserUserId = effectiveAdvertiserUserId(r.scope, asUser);
+
+    const fullCtx = await loadAdvertiserContext(advertiserUserId);
+    const narrowed = scopeForCustomer(fullCtx, customerId);
+    if (!narrowed) {
+      return c.json(
+        { success: false, error: "Client tidak ditemukan dalam scope kamu" },
+        404,
+      );
+    }
+    const { subscriptionIds } = narrowed;
+
+    // Customer profile
+    const customerRows = await db
+      .select({
+        id: customers.id,
+        email: customers.email,
+        phone: customers.phone,
+        deletedAt: customers.deletedAt,
+        profileName: customerProfiles.name,
+        profileEmail: customerProfiles.email,
+        profilePhone: customerProfiles.phone,
+      })
+      .from(customers)
+      .leftJoin(customerProfiles, eq(customerProfiles.customerId, customers.id))
+      .where(eq(customers.id, customerId))
+      .limit(1);
+
+    const cust = customerRows[0];
+    if (!cust || cust.deletedAt) {
+      return c.json(
+        { success: false, error: "Client tidak ditemukan dalam scope kamu" },
+        404,
+      );
+    }
+
+    // Subscriptions (with advertiser name)
+    const advertiserUser = users;
+    const subRows = await db
+      .select({
+        id: subscriptions.id,
+        brand: subscriptions.brand,
+        platform: subscriptions.platform,
+        status: subscriptions.status,
+        startDate: subscriptions.startDate,
+        dueDate: subscriptions.dueDate,
+        onboardingStatus: subscriptions.onboardingStatus,
+        note: subscriptions.note,
+        advertiserId: subscriptions.advertiserId,
+        advertiserName: profiles.name,
+        advertiserEmail: advertiserUser.email,
+      })
+      .from(subscriptions)
+      .leftJoin(advertiserUser, eq(advertiserUser.id, subscriptions.advertiserId))
+      .leftJoin(profiles, eq(profiles.userId, subscriptions.advertiserId))
+      .where(inArray(subscriptions.id, subscriptionIds));
+
+    // Cards: ads counts, kpi counts, tickets open, todos due 24h, todos open
+    let adsTotal = 0;
+    let adsActive = 0;
+    let adsPaused = 0;
+    if (subscriptionIds.length > 0) {
+      const adsRows = await db
+        .select({ id: fbAct.id, actId: fbAct.actId })
+        .from(fbAct)
+        .where(inArray(fbAct.subscriptionId, subscriptionIds));
+      adsTotal = adsRows.length;
+      if (adsRows.length > 0) {
+        const yesterday = daysAgoWibStr(1);
+        const dailyYesterday = await db
+          .select({
+            actId: fbActDailyData.actId,
+            statusLevel: fbActDailyData.statusLevel,
+          })
+          .from(fbActDailyData)
+          .where(
+            and(
+              inArray(fbActDailyData.actId, adsRows.map((r) => r.actId)),
+              eq(fbActDailyData.date, yesterday),
+            ),
+          );
+        for (const d of dailyYesterday) {
+          if (Number(d.statusLevel ?? 0) > 0) adsPaused++;
+          else adsActive++;
+        }
+        const seen = new Set(dailyYesterday.map((d) => d.actId));
+        adsActive += adsRows.filter((r) => !seen.has(r.actId)).length;
+      }
+    }
+
+    // KPI counts
+    let kpiRed = 0;
+    let kpiYellow = 0;
+    let kpiGreen = 0;
+    let kpiNoData = 0;
+    if (subscriptionIds.length > 0) {
+      const rows = await db
+        .select({
+          scorecardId: scorecards.id,
+          threshold: scorecardData.threshold,
+        })
+        .from(scorecards)
+        .leftJoin(
+          scorecardData,
+          and(
+            eq(scorecardData.scorecardId, scorecards.id),
+            eq(scorecardData.status, 1),
+          ),
+        )
+        .where(
+          and(
+            inArray(scorecards.subscriptionId, subscriptionIds),
+            eq(scorecards.status, 1),
+          ),
+        );
+      const worstByScorecard = new Map<number, number | null>();
+      for (const row of rows) {
+        const prev = worstByScorecard.get(row.scorecardId);
+        const cur = row.threshold == null ? null : Number(row.threshold);
+        if (prev === undefined) worstByScorecard.set(row.scorecardId, cur);
+        else if (cur != null && (prev == null || cur > prev)) {
+          worstByScorecard.set(row.scorecardId, cur);
+        }
+      }
+      for (const t of worstByScorecard.values()) {
+        if (t === 2) kpiRed++;
+        else if (t === 1) kpiYellow++;
+        else if (t === 0) kpiGreen++;
+        else kpiNoData++;
+      }
+    }
+
+    // Tickets open
+    let ticketsOpen = 0;
+    if (subscriptionIds.length > 0) {
+      const rows = await db
+        .select({ count: sql<number>`COUNT(*)` })
+        .from(ticketIssues)
+        .where(
+          and(
+            inArray(ticketIssues.subscriptionId, subscriptionIds),
+            ne(ticketIssues.status, 2),
+          ),
+        );
+      ticketsOpen = Number(rows[0]?.count ?? 0);
+    }
+
+    // Todos open + due 24h
+    let todosOpen = 0;
+    let todosDue24h = 0;
+    if (subscriptionIds.length > 0) {
+      const openRows = await db
+        .select({ count: sql<number>`COUNT(*)` })
+        .from(todos)
+        .where(
+          and(
+            inArray(todos.subscriptionId, subscriptionIds),
+            ne(todos.status, 2),
+          ),
+        );
+      todosOpen = Number(openRows[0]?.count ?? 0);
+      const today = todayWibStr();
+      const limit = daysAgoWibStr(-1);
+      const dueRows = await db
+        .select({ count: sql<number>`COUNT(*)` })
+        .from(todos)
+        .where(
+          and(
+            inArray(todos.subscriptionId, subscriptionIds),
+            ne(todos.status, 2),
+            gte(todos.dueDate, today),
+            lte(todos.dueDate, limit),
+          ),
+        );
+      todosDue24h = Number(dueRows[0]?.count ?? 0);
+    }
+
+    return c.json({
+      success: true,
+      data: {
+        customer: {
+          id: cust.id,
+          name: cust.profileName ?? cust.email ?? `Customer #${cust.id}`,
+          email: cust.profileEmail ?? cust.email,
+          phone: cust.profilePhone ?? cust.phone,
+        },
+        subscriptions: subRows.map((s) => ({
+          id: s.id,
+          brand: s.brand,
+          platform: s.platform,
+          status: s.status,
+          startDate: s.startDate,
+          dueDate: s.dueDate,
+          onboardingStatus: s.onboardingStatus,
+          note: s.note,
+          advertiserId: s.advertiserId,
+          advertiserName: s.advertiserName ?? s.advertiserEmail ?? null,
+        })),
+        cards: {
+          ads: { total: adsTotal, active: adsActive, paused: adsPaused },
+          kpi: { red: kpiRed, yellow: kpiYellow, green: kpiGreen, noData: kpiNoData },
+          ticketsOpen,
+          todosOpen,
+          todosDue24h,
+        },
+      },
+    });
+  },
+);
+
+// ───────────────────────── /client/:customerId/ads ─────────────────────────
+//
+// Per-ads detail list for a single client. Used by the "Ads" tab on the client
+// overview page. Returns name, platform (always Meta for now), status from
+// yesterday's snapshot, spend 7d/30d, and last-active timestamp.
+
+router.get(
+  "/client/:customerId/ads",
+  zValidator("param", clientParam),
+  zValidator("query", summaryQuery),
+  async (c) => {
+    const r = await resolveAdvertiserScope(c);
+    if (!r.ok) return r.response;
+    const { asUser } = c.req.valid("query");
+    const { customerId } = c.req.valid("param");
+    const advertiserUserId = effectiveAdvertiserUserId(r.scope, asUser);
+
+    const fullCtx = await loadAdvertiserContext(advertiserUserId);
+    const narrowed = scopeForCustomer(fullCtx, customerId);
+    if (!narrowed) {
+      return c.json(
+        { success: false, error: "Client tidak ditemukan dalam scope kamu" },
+        404,
+      );
+    }
+    const { subscriptionIds } = narrowed;
+    if (subscriptionIds.length === 0) {
+      return c.json({ success: true, data: { ads: [] } });
+    }
+
+    const adsRows = await db
+      .select({
+        id: fbAct.id,
+        actId: fbAct.actId,
+        name: fbAct.name,
+        actName: fbAct.actName,
+        subscriptionId: fbAct.subscriptionId,
+        brand: subscriptions.brand,
+      })
+      .from(fbAct)
+      .leftJoin(subscriptions, eq(subscriptions.id, fbAct.subscriptionId))
+      .where(inArray(fbAct.subscriptionId, subscriptionIds));
+
+    if (adsRows.length === 0) {
+      return c.json({ success: true, data: { ads: [] } });
+    }
+
+    const actIds = adsRows.map((r) => r.actId);
+    const last30Start = daysAgoWibStr(30);
+    const last7Start = daysAgoWibStr(7);
+    const yesterday = daysAgoWibStr(1);
+
+    const daily = await db
+      .select({
+        actId: fbActDailyData.actId,
+        date: fbActDailyData.date,
+        spend: fbActDailyData.spend,
+        statusLevel: fbActDailyData.statusLevel,
+        warningMessage: fbActDailyData.warningMessage,
+      })
+      .from(fbActDailyData)
+      .where(
+        and(
+          inArray(fbActDailyData.actId, actIds),
+          gte(fbActDailyData.date, last30Start),
+        ),
+      );
+
+    type AggAd = {
+      id: number;
+      actId: string;
+      name: string;
+      brand: string | null;
+      status: number;
+      warning: string | null;
+      spend7d: number;
+      spend30d: number;
+      lastActiveDate: string | null;
+    };
+
+    const map = new Map<string, AggAd>();
+    for (const a of adsRows) {
+      map.set(a.actId, {
+        id: a.id,
+        actId: a.actId,
+        name: a.name ?? a.actName ?? a.actId,
+        brand: a.brand,
+        status: 0,
+        warning: null,
+        spend7d: 0,
+        spend30d: 0,
+        lastActiveDate: null,
+      });
+    }
+    for (const d of daily) {
+      const ad = map.get(d.actId);
+      if (!ad) continue;
+      const sp = d.spend == null ? 0 : Number(d.spend);
+      ad.spend30d += sp;
+      if (d.date >= last7Start) ad.spend7d += sp;
+      if (sp > 0 && (!ad.lastActiveDate || d.date > ad.lastActiveDate)) {
+        ad.lastActiveDate = d.date;
+      }
+      if (d.date === yesterday) {
+        ad.status = Number(d.statusLevel ?? 0);
+        ad.warning = d.warningMessage ?? null;
+      }
+    }
+
+    const ads = Array.from(map.values()).sort((a, b) => {
+      // paused first (status >= 1), then by spend30d desc
+      const aPaused = a.status >= 1 ? 1 : 0;
+      const bPaused = b.status >= 1 ? 1 : 0;
+      if (aPaused !== bPaused) return bPaused - aPaused;
+      return b.spend30d - a.spend30d;
+    });
+
+    return c.json({ success: true, data: { ads } });
+  },
+);
 
 export default router;
