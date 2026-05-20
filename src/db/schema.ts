@@ -1079,7 +1079,7 @@ export const fbActNotificationsLog = mysqlTable(
     id: int("id").autoincrement().primaryKey(),
     fbActId: int("fb_act_id").references(() => fbAct.id, { onDelete: "set null" }),
     actId: varchar("act_id", { length: 64 }).notNull(),
-    date: date("date").notNull(),
+    date: date("date", { mode: "string" }).notNull(),
     // main | extra (extra = grup Telegram tambahan per akun)
     type: varchar("type", { length: 64 }).notNull(),
     dataJson: json("data_json").$type<JsonRecord>(),

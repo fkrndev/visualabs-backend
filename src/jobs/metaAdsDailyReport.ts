@@ -20,6 +20,8 @@ import {
   fbActResultBreakdownDaily,
   fbActNotificationsLog,
   fbActReportRuns,
+  users,
+  profiles,
 } from "../db/schema";
 import { eq, and, isNotNull } from "drizzle-orm";
 
@@ -76,10 +78,24 @@ export interface FbActConfig {
   billing_threshold?: number;    // postpaid: threshold sebelum ditagih
   results?: ResultConfigItem[];  // konfigurasi result per akun
   purchase_metrics?: boolean;    // tampilkan Purchase Metrics
-  extra_telegram_chat_id?: string; // grup Telegram tambahan
+  telegram_username?: string;    // override Telegram username utama
+  extra_telegram_username?: string; // username Telegram tambahan
+  telegram_chat_id?: string;     // deprecated — fallback dipakai sebagai username
+  extra_telegram_chat_id?: string; // deprecated — fallback dipakai sebagai username
   keyword_traffic?: string;      // kata kunci nama campaign Traffic (spasi = multi keyword)
-  telegram_chat_id?: string;     // override chat_id utama
   [key: string]: unknown;
+}
+
+function parseKeywordTraffic(value: unknown): string[] {
+  if (typeof value === "string") return value.split(/\s+/).filter(Boolean);
+  if (Array.isArray(value)) return value.filter((v): v is string => typeof v === "string" && v.length > 0);
+  return [];
+}
+
+function resolveUsername(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const cleaned = value.trim().replace(/^@/, "");
+  return cleaned.length > 0 ? cleaned : null;
 }
 
 export interface MetaBalanceData {
@@ -298,9 +314,7 @@ function buildResultBreakdown(
   const resultConfig = config.results ?? [];
   if (resultConfig.length === 0) return [];
 
-  const trafficKeywords = config.keyword_traffic
-    ? config.keyword_traffic.split(/\s+/).filter(Boolean)
-    : [];
+  const trafficKeywords = parseKeywordTraffic(config.keyword_traffic);
 
   const primaryLabelMap: Record<string, { emoji: string; label: string }> = {};
   let fallbackLabel: { emoji: string; label: string } | null = null;
@@ -416,14 +430,22 @@ function getPurchaseMetrics(acctInsights: MetaInsightData): PurchaseMetrics {
 // Telegram
 // ─────────────────────────────────────────────
 
-async function sendTelegram(message: string, chatId: string, botToken: string): Promise<void> {
-  const res = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+const TELEGRAM_NOTIFY_URL =
+  process.env.TELEGRAM_NOTIFY_URL ?? "https://mail.dots.my.id/api/notifications/telegram/send";
+
+async function sendTelegram(message: string, username: string, apiToken: string): Promise<void> {
+  const res = await fetch(TELEGRAM_NOTIFY_URL, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ chat_id: chatId, text: message, parse_mode: "HTML" }),
+    headers: {
+      Authorization: `Bearer ${apiToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ username, text: message, parseMode: "HTML" }),
   });
-  const json: any = await res.json();
-  if (!json.ok) throw new Error(`Telegram error: ${json.description}`);
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    throw new Error(`Telegram notify error ${res.status}: ${errText.slice(0, 200)}`);
+  }
 }
 
 // ─────────────────────────────────────────────
@@ -541,12 +563,17 @@ function buildMessage(opts: {
 // ─────────────────────────────────────────────
 
 export async function runMetaAdsDailyReport(): Promise<void> {
-  const telegramBotToken = process.env.TELEGRAM_BOT_TOKEN;
-  const telegramChatId = process.env.TELEGRAM_CHAT_ID;
+  const telegramApiToken = process.env.TELEGRAM_NOTIFY_TOKEN ?? process.env.TELEGRAM_BOT_TOKEN;
+  // Username resolved per-account dari advertiser (users.username / profiles.telegram_username).
+  // Env ini cuma fallback terakhir kalau advertiser & account-config sama-sama kosong.
+  const defaultTelegramUsername = resolveUsername(
+    process.env.TELEGRAM_NOTIFY_USERNAME ?? process.env.TELEGRAM_CHAT_ID,
+  );
 
-  if (!telegramBotToken || !telegramChatId) {
-    console.error("[MetaAdsJob] TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set — aborting");
-    return;
+  // Token tidak wajib untuk menjalankan job — ingest Meta API + DB tetap jalan.
+  // Notif Telegram hanya dikirim kalau token DAN username sama-sama tersedia.
+  if (!telegramApiToken) {
+    console.warn("[MetaAdsJob] TELEGRAM_NOTIFY_TOKEN not set — Telegram notifikasi akan di-skip");
   }
 
   const todayWib = nowWib();
@@ -587,7 +614,7 @@ export async function runMetaAdsDailyReport(): Promise<void> {
     console.error("[MetaAdsJob] Failed to create report run:", e);
   }
 
-  // Ambil semua fb_act yang punya token
+  // Ambil semua fb_act yang punya token + username advertiser
   const acts = await db
     .select({
       id: fbAct.id,
@@ -599,9 +626,13 @@ export async function runMetaAdsDailyReport(): Promise<void> {
       thresholdCriticalOverride: fbAct.thresholdCriticalOverride,
       postpaidThresholdOverride: fbAct.postpaidThresholdOverride,
       token: fbToken.token,
+      advertiserUsername: users.username,
+      advertiserTelegramUsername: profiles.telegramUsername,
     })
     .from(fbAct)
     .innerJoin(fbToken, eq(fbAct.tokenId, fbToken.id))
+    .innerJoin(users, eq(fbToken.userId, users.id))
+    .leftJoin(profiles, eq(profiles.userId, users.id))
     .where(eq(fbToken.status, 1));
 
   const total = acts.length;
@@ -701,7 +732,7 @@ export async function runMetaAdsDailyReport(): Promise<void> {
         const campSpend = parseFloat(camp.spend ?? "0");
         const campActions = normalizeActions(camp.actions ?? []);
         const campLinkClicks = Math.round(campActions["link_click"] ?? 0);
-        const trafficKws = config.keyword_traffic ? config.keyword_traffic.split(/\s+/).filter(Boolean) : [];
+        const trafficKws = parseKeywordTraffic(config.keyword_traffic);
         const isTraffic = trafficKws.length > 0 && trafficKws.some((kw) => (camp.campaign_name ?? "").includes(kw));
         let resolvedPrimaryActionType: string | null = null;
         for (const at of Object.keys(campActions)) {
@@ -773,28 +804,39 @@ export async function runMetaAdsDailyReport(): Promise<void> {
         purchaseMetrics,
       });
 
-      const mainChatId = config.telegram_chat_id ?? telegramChatId;
-      await sendTelegram(message, mainChatId, telegramBotToken);
+      const mainUsername =
+        resolveUsername(config.telegram_username ?? config.telegram_chat_id) ??
+        resolveUsername(act.advertiserTelegramUsername) ??
+        resolveUsername(act.advertiserUsername) ??
+        defaultTelegramUsername;
 
-      await db.insert(fbActNotificationsLog).values({
-        fbActId: act.id,
-        actId: act.actId,
-        date: yesterdayStr,
-        type: "main",
-        dataJson: { chatId: mainChatId, accountName } as any,
-      });
-
-      // Extra Telegram group
-      if (config.extra_telegram_chat_id) {
-        await sendTelegram(message, config.extra_telegram_chat_id, telegramBotToken);
+      if (!telegramApiToken) {
+        // token kosong → skip semua notifikasi, ingest sudah aman tersimpan
+      } else if (!mainUsername) {
+        console.warn(`  [${i + 1}] Skip kirim Telegram — advertiser tidak punya username (act ${actIdFull})`);
+      } else {
+        await sendTelegram(message, mainUsername, telegramApiToken);
         await db.insert(fbActNotificationsLog).values({
           fbActId: act.id,
           actId: act.actId,
           date: yesterdayStr,
-          type: "extra",
-          dataJson: { chatId: config.extra_telegram_chat_id, accountName } as any,
+          type: "main",
+          dataJson: { username: mainUsername, accountName } as any,
         });
-        console.log(`  [${i + 1}] Also sent to extra group (${config.extra_telegram_chat_id})`);
+
+        // Extra Telegram recipient
+        const extraUsername = resolveUsername(config.extra_telegram_username ?? config.extra_telegram_chat_id);
+        if (extraUsername) {
+          await sendTelegram(message, extraUsername, telegramApiToken);
+          await db.insert(fbActNotificationsLog).values({
+            fbActId: act.id,
+            actId: act.actId,
+            date: yesterdayStr,
+            type: "extra",
+            dataJson: { username: extraUsername, accountName } as any,
+          });
+          console.log(`  [${i + 1}] Also sent to extra recipient (${extraUsername})`);
+        }
       }
 
       console.log(`  [${i + 1}] OK — ${accountName} | Saldo: ${formatIdr(balanceInfo.balance)} [${balanceInfo.balanceType}]`);
@@ -810,14 +852,23 @@ export async function runMetaAdsDailyReport(): Promise<void> {
         `❌ Gagal mengambil data: ${String(e.message ?? e)}`,
       ].join("\n");
 
-      try {
-        const mainChatId = config.telegram_chat_id ?? telegramChatId;
-        await sendTelegram(errMsg, mainChatId, telegramBotToken);
-        if (config.extra_telegram_chat_id) {
-          await sendTelegram(errMsg, config.extra_telegram_chat_id, telegramBotToken);
+      if (telegramApiToken) {
+        try {
+          const mainUsername =
+            resolveUsername(config.telegram_username ?? config.telegram_chat_id) ??
+            resolveUsername(act.advertiserTelegramUsername) ??
+            resolveUsername(act.advertiserUsername) ??
+            defaultTelegramUsername;
+          if (mainUsername) {
+            await sendTelegram(errMsg, mainUsername, telegramApiToken);
+          }
+          const extraUsername = resolveUsername(config.extra_telegram_username ?? config.extra_telegram_chat_id);
+          if (extraUsername) {
+            await sendTelegram(errMsg, extraUsername, telegramApiToken);
+          }
+        } catch (telErr) {
+          console.error(`  [${i + 1}] Also failed to send error Telegram:`, telErr);
         }
-      } catch (telErr) {
-        console.error(`  [${i + 1}] Also failed to send error Telegram:`, telErr);
       }
 
       try {
