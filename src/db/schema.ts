@@ -1,10 +1,12 @@
 import {
+  bigint,
   date,
   decimal,
   index,
   int,
   json,
   longtext,
+  mysqlEnum,
   mysqlTable,
   serial,
   text,
@@ -1108,5 +1110,73 @@ export const fbActReportRuns = mysqlTable(
   (table) => [
     uniqueIndex("fb_act_report_runs_date_unique").on(table.date),
     index("fb_act_report_runs_date_idx").on(table.date),
+  ],
+);
+
+// ─── Notification System ─────────────────────────────────────────────
+
+export const notificationSettingsGlobal = mysqlTable(
+  "notification_settings_global",
+  {
+    userId: int("user_id").primaryKey().references(() => users.id, { onDelete: "cascade" }),
+    telegramUsername: varchar("telegram_username", { length: 64 }),
+    extraTelegramUsername: varchar("extra_telegram_username", { length: 64 }),
+    telegramStatus: tinyint("telegram_status").notNull().default(0), // 0=unknown, 1=verified, 2=failed
+    telegramVerifiedAt: timestamp("telegram_verified_at"),
+    quietHoursStart: tinyint("quiet_hours_start").notNull().default(22),
+    quietHoursEnd: tinyint("quiet_hours_end").notNull().default(6),
+    dailyReportTime: tinyint("daily_report_time").notNull().default(5),
+    language: varchar("language", { length: 8 }).notNull().default("id"),
+    pausedUntil: timestamp("paused_until"),
+    pausedReason: varchar("paused_reason", { length: 255 }),
+    dataJson: json("data_json").$type<JsonRecord>(),
+    updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+  },
+);
+
+export const notificationPreferences = mysqlTable(
+  "notification_preferences",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    userId: int("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    fbActId: int("fb_act_id").references(() => fbAct.id, { onDelete: "cascade" }),
+    notifCode: varchar("notif_code", { length: 64 }).notNull(),
+    enabled: tinyint("enabled").notNull().default(1),
+    channel: varchar("channel", { length: 32 }).notNull().default("telegram"),
+    dataJson: json("data_json").$type<JsonRecord>(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("notif_pref_user_act_code_unique").on(table.userId, table.fbActId, table.notifCode, table.channel),
+    index("notif_pref_user_idx").on(table.userId),
+    index("notif_pref_act_idx").on(table.fbActId),
+  ],
+);
+
+export const notificationLog = mysqlTable(
+  "notification_log",
+  {
+    id: bigint("id", { mode: "number", unsigned: true }).autoincrement().primaryKey(),
+    userId: int("user_id").references(() => users.id, { onDelete: "set null" }),
+    fbActId: int("fb_act_id").references(() => fbAct.id, { onDelete: "set null" }),
+    notifCode: varchar("notif_code", { length: 64 }).notNull(),
+    mode: varchar("mode", { length: 1 }).notNull(), // A | B | C
+    dedupeKey: varchar("dedupe_key", { length: 191 }).notNull(),
+    recipient: varchar("recipient", { length: 128 }).notNull(),
+    title: varchar("title", { length: 255 }),
+    preview: varchar("preview", { length: 500 }),
+    body: text("body"),
+    status: mysqlEnum("status", ["sent", "failed", "skipped"]).notNull(),
+    reason: varchar("reason", { length: 255 }),
+    readAt: timestamp("read_at"),
+    dataJson: json("data_json").$type<JsonRecord>(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("notif_log_dedupe_unique").on(table.dedupeKey, table.recipient, table.notifCode),
+    index("notif_log_user_date_idx").on(table.userId, table.createdAt),
+    index("notif_log_act_code_idx").on(table.fbActId, table.notifCode),
+    index("notif_log_unread_idx").on(table.userId, table.readAt),
   ],
 );

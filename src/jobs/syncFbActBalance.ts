@@ -18,6 +18,7 @@ import {
   getSaldoStatus,
   type FbActConfig,
 } from "./metaAdsDailyReport";
+import { dispatchNotification } from "../services/notifyTelegram";
 
 const WIB_OFFSET_MS = 7 * 60 * 60 * 1000;
 
@@ -38,7 +39,10 @@ export interface SyncFbActResult {
  * Sync balance + key insights untuk 1 fb_act, simpan ke fb_act_daily_data
  * untuk tanggal kemarin (WIB). Gunakan onDuplicateKeyUpdate.
  */
-export async function syncFbActBalance(fbActId: number): Promise<SyncFbActResult> {
+export async function syncFbActBalance(
+  fbActId: number,
+  opts: { sendRealtimeAlerts?: boolean } = {},
+): Promise<SyncFbActResult> {
   const rows = await db
     .select({
       id: fbAct.id,
@@ -49,6 +53,7 @@ export async function syncFbActBalance(fbActId: number): Promise<SyncFbActResult
       tokenId: fbAct.tokenId,
       token: fbToken.token,
       tokenStatus: fbToken.status,
+      userId: fbToken.userId,
     })
     .from(fbAct)
     .leftJoin(fbToken, eq(fbToken.id, fbAct.tokenId))
@@ -150,6 +155,58 @@ export async function syncFbActBalance(fbActId: number): Promise<SyncFbActResult
         },
       });
 
+    // Real-time alert (BALANCE_DEPLETED / BALANCE_CRITICAL_RT) — dipakai oleh
+    // realtimeBalanceCheck job. Pakai dedupe per (date, level) supaya tidak
+    // dobel tiap polling.
+    if (opts.sendRealtimeAlerts && act.userId) {
+      const todayStr = todayWib.toISOString().slice(0, 10);
+      if (balanceInfo.balance <= 0) {
+        await dispatchNotification({
+          userId: act.userId,
+          fbActId: act.id,
+          notifCode: "BALANCE_DEPLETED",
+          mode: "A",
+          dedupeKey: `act_${act.id}:${todayStr}:depleted`,
+          title: `🚨 Saldo habis — ${accountName}`,
+          preview: "Iklan akan / sudah berhenti. Segera top up.",
+          buildMessage: () => [
+            "🚨 <b>SALDO HABIS</b>",
+            `📅 ${todayWib.toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })}`,
+            "━━━━━━━━━━━━━━━━━━",
+            `🏢 Akun: ${accountName}`,
+            `💳 ${balanceInfo.balanceType}`,
+            `🔴 Sisa Saldo: ${balanceInfo.balance.toLocaleString("id-ID")}`,
+            "",
+            "Segera top up — iklanmu sudah berhenti atau akan berhenti.",
+          ].join("\n"),
+          defaultEnabled: true,
+          forceSend: true,
+        });
+      } else if (balanceInfo.balance < THRESHOLD_CRITICAL) {
+        await dispatchNotification({
+          userId: act.userId,
+          fbActId: act.id,
+          notifCode: "BALANCE_CRITICAL_RT",
+          mode: "A",
+          dedupeKey: `act_${act.id}:${todayStr}:critical_rt`,
+          title: `🚨 Saldo critical — ${accountName}`,
+          preview: warningMsg ?? "Saldo di bawah threshold critical",
+          buildMessage: () => [
+            "🚨 <b>Saldo Critical</b>",
+            `📅 ${todayWib.toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })}`,
+            "━━━━━━━━━━━━━━━━━━",
+            `🏢 Akun: ${accountName}`,
+            `💳 ${balanceInfo.balanceType}`,
+            `🔴 Sisa Saldo: Rp ${Math.round(balanceInfo.balance).toLocaleString("id-ID")}`,
+            "",
+            warningMsg ?? "Saldo di bawah threshold critical. Segera top up.",
+          ].join("\n"),
+          defaultEnabled: true,
+          forceSend: true,
+        });
+      }
+    }
+
     return {
       success: true,
       message: "Sync berhasil",
@@ -159,9 +216,42 @@ export async function syncFbActBalance(fbActId: number): Promise<SyncFbActResult
       statusLevel,
     };
   } catch (e: any) {
+    // Deteksi OAuthException → tandai token invalid + kirim alert
+    const errMsg = String(e?.message ?? e);
+    const isOAuthError =
+      /OAuthException|oauth|access[\s_-]?token|invalid[\s_-]?token|code\s*[:=]\s*190/i.test(errMsg);
+    if (isOAuthError && act.tokenId && opts.sendRealtimeAlerts && act.userId) {
+      try {
+        await db.update(fbToken).set({ status: 0 }).where(eq(fbToken.id, act.tokenId));
+        const accountNameForAlert = act.actName ?? act.name ?? act.actId;
+        const todayStr = new Date().toISOString().slice(0, 10);
+        await dispatchNotification({
+          userId: act.userId,
+          fbActId: act.id,
+          notifCode: "TOKEN_INVALID",
+          mode: "A",
+          dedupeKey: `token_${act.tokenId}:${todayStr}`,
+          title: `🔒 Token Meta invalid — ${accountNameForAlert}`,
+          preview: errMsg.slice(0, 200),
+          buildMessage: () => [
+            "🔒 <b>Token Meta Invalid</b>",
+            `📅 ${new Date().toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })}`,
+            "━━━━━━━━━━━━━━━━━━",
+            `🏢 Akun: ${accountNameForAlert}`,
+            `❌ Error: ${errMsg.slice(0, 200)}`,
+            "",
+            "Silakan hubungkan kembali akun Meta-mu di halaman pengaturan.",
+          ].join("\n"),
+          defaultEnabled: true,
+          forceSend: true,
+        });
+      } catch (alertErr) {
+        console.error("[syncFbActBalance] Failed to notify token invalid:", alertErr);
+      }
+    }
     return {
       success: false,
-      message: `Gagal fetch dari Meta API: ${e?.message ?? e}`,
+      message: `Gagal fetch dari Meta API: ${errMsg}`,
     };
   }
 }

@@ -24,6 +24,8 @@ import {
   profiles,
 } from "../db/schema";
 import { eq, and, isNotNull } from "drizzle-orm";
+import { dispatchNotification } from "../services/notifyTelegram";
+import { detectAndNotifyAnomalies } from "./notificationSummaries";
 
 // ─────────────────────────────────────────────
 // Constants
@@ -614,7 +616,7 @@ export async function runMetaAdsDailyReport(): Promise<void> {
     console.error("[MetaAdsJob] Failed to create report run:", e);
   }
 
-  // Ambil semua fb_act yang punya token + username advertiser
+  // Ambil semua fb_act yang punya token + username advertiser + userId untuk dispatcher
   const acts = await db
     .select({
       id: fbAct.id,
@@ -626,6 +628,7 @@ export async function runMetaAdsDailyReport(): Promise<void> {
       thresholdCriticalOverride: fbAct.thresholdCriticalOverride,
       postpaidThresholdOverride: fbAct.postpaidThresholdOverride,
       token: fbToken.token,
+      userId: users.id,
       advertiserUsername: users.username,
       advertiserTelegramUsername: profiles.telegramUsername,
     })
@@ -791,7 +794,7 @@ export async function runMetaAdsDailyReport(): Promise<void> {
         });
       }
 
-      // 6. Kirim Telegram
+      // 6. Kirim Telegram via dispatcher (mode C — summary periodik)
       const message = buildMessage({
         accountName,
         tanggalData,
@@ -804,38 +807,74 @@ export async function runMetaAdsDailyReport(): Promise<void> {
         purchaseMetrics,
       });
 
-      const mainUsername =
-        resolveUsername(config.telegram_username ?? config.telegram_chat_id) ??
-        resolveUsername(act.advertiserTelegramUsername) ??
-        resolveUsername(act.advertiserUsername) ??
-        defaultTelegramUsername;
-
       if (!telegramApiToken) {
         // token kosong → skip semua notifikasi, ingest sudah aman tersimpan
-      } else if (!mainUsername) {
-        console.warn(`  [${i + 1}] Skip kirim Telegram — advertiser tidak punya username (act ${actIdFull})`);
       } else {
-        await sendTelegram(message, mainUsername, telegramApiToken);
-        await db.insert(fbActNotificationsLog).values({
+        const dispatchResult = await dispatchNotification({
+          userId: act.userId,
           fbActId: act.id,
-          actId: act.actId,
-          date: yesterdayStr,
-          type: "main",
-          dataJson: { username: mainUsername, accountName } as any,
+          notifCode: "DAILY_REPORT",
+          mode: "C",
+          dedupeKey: `act_${act.id}:${yesterdayStr}:daily`,
+          title: `Daily Report — ${accountName}`,
+          preview: `${formatIdr(parseFloat(acctInsights?.spend ?? "0"))} · ${balanceInfo.balanceType} · ${statusEmoji}`,
+          buildMessage: () => message,
+          defaultEnabled: true,
         });
 
-        // Extra Telegram recipient
-        const extraUsername = resolveUsername(config.extra_telegram_username ?? config.extra_telegram_chat_id);
-        if (extraUsername) {
-          await sendTelegram(message, extraUsername, telegramApiToken);
-          await db.insert(fbActNotificationsLog).values({
+        // Dual-write log lama selama transisi (Fase 5 transition)
+        if (dispatchResult.status === "sent") {
+          try {
+            await db.insert(fbActNotificationsLog).values({
+              fbActId: act.id,
+              actId: act.actId,
+              date: yesterdayStr,
+              type: "main",
+              dataJson: { username: dispatchResult.recipient, accountName } as any,
+            });
+          } catch {}
+        }
+
+        // Anomaly detection (mode C, opt-in)
+        try {
+          const totalResultsYesterday = breakdown.reduce((s, b) => s + b.results, 0);
+          await detectAndNotifyAnomalies({
             fbActId: act.id,
-            actId: act.actId,
-            date: yesterdayStr,
-            type: "extra",
-            dataJson: { username: extraUsername, accountName } as any,
+            userId: act.userId,
+            accountName,
+            yesterdayStr,
+            spendYesterday: spend,
+            resultsYesterday: totalResultsYesterday,
+            purchaseRoas: purchaseMetrics?.roas ?? null,
           });
-          console.log(`  [${i + 1}] Also sent to extra recipient (${extraUsername})`);
+        } catch (anoErr) {
+          console.error(`  [${i + 1}] Anomaly detect failed:`, anoErr);
+        }
+
+        // Status-level alerts (warning/critical) — kirim sebagai notif tambahan
+        if (statusLevel >= 1) {
+          await dispatchNotification({
+            userId: act.userId,
+            fbActId: act.id,
+            notifCode: statusLevel === 2 ? "BALANCE_CRITICAL" : "BALANCE_WARNING",
+            mode: "C",
+            dedupeKey: `act_${act.id}:${yesterdayStr}:${statusLevel === 2 ? "critical" : "warning"}`,
+            title: `${statusLevel === 2 ? "🚨 Saldo Critical" : "💛 Saldo Warning"} — ${accountName}`,
+            preview: warningMsg ?? `Sisa saldo ${formatIdr(balanceInfo.balance)}`,
+            buildMessage: () => [
+              `${statusLevel === 2 ? "🚨" : "💛"} <b>Peringatan Saldo</b>`,
+              `📅 ${tanggalReport}`,
+              "━━━━━━━━━━━━━━━━━━",
+              `🏢 Akun: ${accountName}`,
+              `💳 ${balanceInfo.balanceType}`,
+              `${statusEmoji} Sisa Saldo: ${formatIdr(balanceInfo.balance)}`,
+              "",
+              warningMsg ?? "",
+            ].join("\n"),
+            defaultEnabled: true,
+            // Critical = Tier 1, byp​ass quiet hours & pause
+            forceSend: statusLevel === 2,
+          });
         }
       }
 
@@ -854,18 +893,18 @@ export async function runMetaAdsDailyReport(): Promise<void> {
 
       if (telegramApiToken) {
         try {
-          const mainUsername =
-            resolveUsername(config.telegram_username ?? config.telegram_chat_id) ??
-            resolveUsername(act.advertiserTelegramUsername) ??
-            resolveUsername(act.advertiserUsername) ??
-            defaultTelegramUsername;
-          if (mainUsername) {
-            await sendTelegram(errMsg, mainUsername, telegramApiToken);
-          }
-          const extraUsername = resolveUsername(config.extra_telegram_username ?? config.extra_telegram_chat_id);
-          if (extraUsername) {
-            await sendTelegram(errMsg, extraUsername, telegramApiToken);
-          }
+          await dispatchNotification({
+            userId: act.userId,
+            fbActId: act.id,
+            notifCode: "DAILY_REPORT_ERROR",
+            mode: "A",
+            dedupeKey: `act_${act.id}:${yesterdayStr}:error`,
+            title: `Daily Report Error — ${actIdFull}`,
+            preview: String(e.message ?? e).slice(0, 200),
+            buildMessage: () => errMsg,
+            defaultEnabled: true,
+            forceSend: true,
+          });
         } catch (telErr) {
           console.error(`  [${i + 1}] Also failed to send error Telegram:`, telErr);
         }

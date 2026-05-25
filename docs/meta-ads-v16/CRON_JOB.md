@@ -50,11 +50,11 @@ bun run scripts/run-meta-ads-report.ts
 Jalankan `crontab -e` lalu tambahkan:
 
 ```cron
-# Setiap hari jam 07:00 WIB
-0 0 * * * cd /home/visualabs/web/vims.dots.my.id/private/v-auto-backend && bun run scripts/run-meta-ads-report.ts >> /var/log/meta-ads-report.log 2>&1
+# Setiap hari jam 05:00 WIB
+0 22 * * * cd /home/visualabs/web/vims.dots.my.id/private/v-auto-backend && bun run scripts/run-meta-ads-report.ts > /dev/null 2>&1
 ```
 
-> Jam 00:00 UTC = 07:00 WIB. Sesuaikan path ke direktori project.
+> Jam 22:00 UTC = 05:00 WIB. Sesuaikan path ke direktori project.
 
 ---
 
