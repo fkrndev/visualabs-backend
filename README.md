@@ -8,5 +8,4 @@ To run:
 bun run dev
 ```
 
-
 pm2 start ecosystem.config.cjs
