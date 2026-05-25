@@ -34,6 +34,7 @@ import teamInsightsRoutes from "./routes/teamInsights";
 import adsMonitoringRoutes from "./routes/adsMonitoring";
 import advertiserHomeRoutes from "./routes/advertiserHome";
 import notificationsRoutes from "./routes/notifications";
+import onboardingRoutes from "./routes/onboarding";
 import openApiSpec from "./openapi/spec";
 import { role } from "./utils/auth/role";
 // import { readFileSync } from "fs";
@@ -111,6 +112,7 @@ app.route("/team-insights", teamInsightsRoutes);
 app.route("/ads-monitoring", adsMonitoringRoutes);
 app.route("/advertiser-home", advertiserHomeRoutes);
 app.route("/notifications", notificationsRoutes);
+app.route("/onboarding", onboardingRoutes);
 
 app.notFound((c) => {
   return c.json(

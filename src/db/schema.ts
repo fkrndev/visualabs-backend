@@ -1180,3 +1180,25 @@ export const notificationLog = mysqlTable(
     index("notif_log_unread_idx").on(table.userId, table.readAt),
   ],
 );
+
+// ─── Onboarding Progress ─────────────────────────────────────────────
+
+export const userOnboardingProgress = mysqlTable(
+  "user_onboarding_progress",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    userId: int("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    flowKey: varchar("flow_key", { length: 64 }).notNull(),
+    stepKey: varchar("step_key", { length: 64 }).notNull(),
+    manual: tinyint("manual").notNull().default(0),
+    completedAt: timestamp("completed_at"),
+    dismissedAt: timestamp("dismissed_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("uop_user_flow_step_unique").on(table.userId, table.flowKey, table.stepKey),
+    index("uop_user_idx").on(table.userId),
+    index("uop_flow_idx").on(table.flowKey),
+  ],
+);
