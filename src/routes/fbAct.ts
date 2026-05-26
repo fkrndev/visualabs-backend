@@ -289,8 +289,34 @@ router.post('/validate', zValidator('json', validatePayload), async (c) => {
   const cleanActId = actId.trim().startsWith('act_') ? actId.trim() : `act_${actId.trim()}`;
 
   try {
-    const url = new URL(`https://graph.facebook.com/v19.0/${cleanActId}`);
-    url.searchParams.set('fields', 'name,id,currency,account_status,amount_spent,balance');
+    const url = new URL(`https://graph.facebook.com/v20.0/${cleanActId}`);
+    url.searchParams.set(
+      'fields',
+      [
+        'id',
+        'account_id',
+        'name',
+        'currency',
+        'account_status',
+        'disable_reason',
+        'amount_spent',
+        'balance',
+        'spend_cap',
+        'timezone_name',
+        'timezone_offset_hours_utc',
+        'business{id,name}',
+        'business_country_code',
+        'funding_source_details',
+        'owner',
+        'created_time',
+        'capabilities',
+        'is_prepay_account',
+        'is_personal',
+        'tax_id_status',
+        'min_daily_budget',
+        'age',
+      ].join(','),
+    );
     url.searchParams.set('access_token', token);
 
     const res = await fetch(url.toString());
@@ -307,26 +333,230 @@ router.post('/validate', zValidator('json', validatePayload), async (c) => {
     const statusMap: Record<number, string> = {
       1: 'Aktif',
       2: 'Dinonaktifkan',
-      3: 'Tidak satupun',
-      7: 'Pending Risk Review',
-      8: 'Pending Settlement',
-      9: 'In Grace Period',
-      100: 'Pending Closure',
-      101: 'Closed',
-      201: 'Any Active',
-      202: 'Any Closed',
+      3: 'Tagihan Belum Lunas',
+      7: 'Menunggu Review Risiko',
+      8: 'Menunggu Pelunasan',
+      9: 'Masa Tenggang',
+      100: 'Akan Ditutup',
+      101: 'Ditutup',
+      201: 'Aktif (Apapun)',
+      202: 'Ditutup (Apapun)',
     };
+
+    const disableReasonMap: Record<number, string> = {
+      0: 'Tidak ada',
+      1: 'Pelanggaran kebijakan iklan',
+      2: 'Review IP iklan',
+      3: 'Masalah pembayaran',
+      4: 'Akun gray dimatikan',
+      5: 'Review AFC iklan',
+      6: 'Business Integrity RAR',
+      7: 'Ditutup permanen',
+      8: 'Reseller tidak terpakai',
+      9: 'Akun tidak terpakai',
+    };
+
+    const taxStatusMap: Record<number, string> = {
+      0: 'Tidak diketahui',
+      1: 'VAT tidak diperlukan',
+      2: 'Informasi VAT diperlukan',
+      3: 'Informasi VAT terkirim',
+      4: 'Validasi VAT offline gagal',
+      5: 'VAT tidak didukung',
+    };
+
+    const fundingType = (() => {
+      const fs = data.funding_source_details;
+      if (!fs) return null;
+      const t = typeof fs.type === 'number' ? fs.type : null;
+      const typeMap: Record<number, string> = {
+        1: 'Kartu Kredit',
+        2: 'PayPal',
+        3: 'Manual Deposit',
+        4: 'Akun Bank',
+        5: 'Kartu Debit',
+        6: 'Pulsa Mobile',
+        7: 'Voucher Promo',
+        8: 'BoletoBancario',
+        9: 'Direct Debit',
+        10: 'Coupon',
+      };
+      return {
+        id: fs.id ?? null,
+        display: fs.display_string ?? null,
+        type: t,
+        typeLabel: t != null ? (typeMap[t] ?? `Tipe ${t}`) : null,
+      };
+    })();
+
+    const accountStatus = Number(data.account_status);
+    const disableReason = Number(data.disable_reason ?? 0);
+    const isActive = accountStatus === 1;
+
+    // Fetch purchase metrics (last 30d) — non-blocking failure
+    const PURCHASE_ACTION_TYPES = new Set([
+      'purchase',
+      'omni_purchase',
+      'web_in_store_purchase',
+      'offsite_conversion.fb_pixel_purchase',
+      'offline_conversion.purchase',
+      'app_custom_event.fb_mobile_purchase',
+    ]);
+    let purchaseStats: {
+      hasInsights: boolean;
+      totalCount: number;
+      totalValue: number;
+      spend: number;
+      roas: number | null;
+      byType: Array<{ actionType: string; count: number; value: number }>;
+    } | null = null;
+    try {
+      const insightsUrl = new URL(`https://graph.facebook.com/v20.0/${cleanActId}/insights`);
+      insightsUrl.searchParams.set('fields', 'spend,actions,action_values');
+      insightsUrl.searchParams.set('date_preset', 'last_30d');
+      insightsUrl.searchParams.set('level', 'account');
+      insightsUrl.searchParams.set('access_token', token);
+      const insRes = await fetch(insightsUrl.toString());
+      const insData: any = await insRes.json();
+      if (!insData.error) {
+        const rows: any[] = Array.isArray(insData.data) ? insData.data : [];
+        const byTypeMap = new Map<string, { count: number; value: number }>();
+        let totalSpend = 0;
+        for (const row of rows) {
+          totalSpend += Number(row.spend) || 0;
+          const values = new Map<string, number>();
+          for (const v of (row.action_values ?? [])) {
+            if (v?.action_type) values.set(v.action_type, Number(v.value) || 0);
+          }
+          for (const a of (row.actions ?? [])) {
+            if (!a?.action_type || !PURCHASE_ACTION_TYPES.has(a.action_type)) continue;
+            const prev = byTypeMap.get(a.action_type) ?? { count: 0, value: 0 };
+            prev.count += Number(a.value) || 0;
+            prev.value += values.get(a.action_type) ?? 0;
+            byTypeMap.set(a.action_type, prev);
+          }
+        }
+        const byType = Array.from(byTypeMap.entries())
+          .map(([t, v]) => ({ actionType: t, count: v.count, value: v.value }))
+          .sort((a, b) => b.count - a.count);
+        const totalCount = byType.reduce((s, x) => s + x.count, 0);
+        const totalValue = byType.reduce((s, x) => s + x.value, 0);
+        purchaseStats = {
+          hasInsights: rows.length > 0,
+          totalCount,
+          totalValue,
+          spend: totalSpend,
+          roas: totalSpend > 0 ? totalValue / totalSpend : null,
+          byType,
+        };
+      }
+    } catch { /* silent — purchase stats best-effort */ }
 
     return c.json({
       success: true,
       data: {
         id: data.id,
+        accountId: data.account_id,
         name: data.name,
         currency: data.currency,
-        accountStatus: data.account_status,
-        accountStatusLabel: statusMap[data.account_status] ?? `Status ${data.account_status}`,
+        accountStatus,
+        accountStatusLabel: statusMap[accountStatus] ?? `Status ${accountStatus}`,
+        isActive,
+        disableReason,
+        disableReasonLabel: disableReason ? (disableReasonMap[disableReason] ?? `Alasan ${disableReason}`) : null,
         amountSpent: data.amount_spent,
         balance: data.balance,
+        spendCap: data.spend_cap,
+        timezoneName: data.timezone_name,
+        timezoneOffsetHours: data.timezone_offset_hours_utc,
+        businessCountryCode: data.business_country_code,
+        business: data.business ? { id: data.business.id, name: data.business.name } : null,
+        fundingSource: fundingType,
+        owner: data.owner,
+        createdTime: data.created_time,
+        ageDays: typeof data.age === 'number' ? Math.round(data.age) : null,
+        capabilities: Array.isArray(data.capabilities) ? data.capabilities : [],
+        isPrepayAccount: data.is_prepay_account ?? null,
+        isPersonal: data.is_personal === 1 || data.is_personal === true,
+        taxIdStatus: data.tax_id_status ?? null,
+        taxIdStatusLabel: data.tax_id_status != null ? (taxStatusMap[Number(data.tax_id_status)] ?? null) : null,
+        minDailyBudget: data.min_daily_budget,
+        purchaseStats,
+      },
+    });
+  } catch (error: any) {
+    console.error(error);
+    return c.json({ success: false, message: 'Gagal menghubungi Meta API: ' + (error?.message || error) }, 500);
+  }
+});
+
+const validateResultsPayload = z.object({
+  token: z.string().min(1),
+  actId: z.string().min(1),
+  actionTypes: z.array(z.string()).min(1),
+});
+
+router.post('/validate-results', zValidator('json', validateResultsPayload), async (c) => {
+  const { token, actId, actionTypes } = c.req.valid('json');
+  const cleanActId = actId.trim().startsWith('act_') ? actId.trim().slice(4) : actId.trim();
+
+  try {
+    const url = new URL(`https://graph.facebook.com/v20.0/act_${cleanActId}/insights`);
+    url.searchParams.set('fields', 'actions,action_values');
+    url.searchParams.set('date_preset', 'last_30d');
+    url.searchParams.set('level', 'account');
+    url.searchParams.set('access_token', token);
+
+    const res = await fetch(url.toString());
+    const data: any = await res.json();
+
+    if (data.error) {
+      return c.json({
+        success: false,
+        message: data.error.message || 'Gagal ambil insights',
+        error: data.error,
+      });
+    }
+
+    const aggregated = new Map<string, { count: number; value: number }>();
+    const rows: any[] = Array.isArray(data.data) ? data.data : [];
+    for (const row of rows) {
+      const actions: any[] = Array.isArray(row.actions) ? row.actions : [];
+      const values: any[] = Array.isArray(row.action_values) ? row.action_values : [];
+      const valueByType = new Map<string, number>();
+      for (const v of values) {
+        if (v?.action_type) valueByType.set(v.action_type, Number(v.value) || 0);
+      }
+      for (const a of actions) {
+        if (!a?.action_type) continue;
+        const prev = aggregated.get(a.action_type) ?? { count: 0, value: 0 };
+        prev.count += Number(a.value) || 0;
+        prev.value += valueByType.get(a.action_type) ?? 0;
+        aggregated.set(a.action_type, prev);
+      }
+    }
+
+    const results = actionTypes.map((t) => {
+      const hit = aggregated.get(t);
+      return {
+        actionType: t,
+        found: !!hit && hit.count > 0,
+        count: hit?.count ?? 0,
+        value: hit?.value ?? 0,
+      };
+    });
+
+    const availableActionTypes = Array.from(aggregated.entries())
+      .sort((a, b) => b[1].count - a[1].count)
+      .map(([type, v]) => ({ actionType: type, count: v.count, value: v.value }));
+
+    return c.json({
+      success: true,
+      data: {
+        period: 'last_30d',
+        hasInsights: rows.length > 0,
+        results,
+        availableActionTypes,
       },
     });
   } catch (error: any) {
