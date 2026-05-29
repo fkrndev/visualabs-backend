@@ -16,6 +16,7 @@ import {
   getAccountInsights,
   getEffectiveBalance,
   getSaldoStatus,
+  currencyMinorDivisor,
   type FbActConfig,
 } from "./metaAdsDailyReport";
 import { dispatchNotification } from "../services/notifyTelegram";
@@ -112,9 +113,9 @@ export async function syncFbActBalance(
         date: yesterdayStr,
         balance: String(balanceInfo.balance),
         amountSpent: balanceData.amount_spent
-          ? String(parseInt(balanceData.amount_spent) / 100)
+          ? String(parseInt(balanceData.amount_spent) / currencyMinorDivisor(balanceData.currency))
           : null,
-        spendCap: balanceData.spend_cap ? String(parseInt(balanceData.spend_cap) / 100) : null,
+        spendCap: balanceData.spend_cap ? String(parseInt(balanceData.spend_cap) / currencyMinorDivisor(balanceData.currency)) : null,
         effectiveBalance: String(balanceInfo.balance),
         balanceType: balanceInfo.balanceType,
         spendingLimit: balanceInfo.spendingLimit ? String(balanceInfo.spendingLimit) : null,

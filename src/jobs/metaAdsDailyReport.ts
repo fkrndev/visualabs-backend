@@ -37,6 +37,18 @@ const WIB_OFFSET_MS = 7 * 60 * 60 * 1000;
 export const THRESHOLD_CRITICAL = 100_000;
 export const THRESHOLD_WARNING = 1_000_000;
 
+// Mata uang tanpa subunit (zero-decimal) di Meta API — balance/amount_spent/
+// spend_cap sudah dalam satuan utuh, JANGAN dibagi 100. IDR termasuk
+// (mis. balance "1756976" = Rp 1.756.976, bukan Rp 17.570).
+const ZERO_DECIMAL_CURRENCIES = new Set([
+  "IDR", "JPY", "KRW", "VND", "CLP", "CRC", "GNF", "HUF", "ISK",
+  "PYG", "RWF", "TWD", "UGX", "UYI", "VUV", "XAF", "XOF", "XPF",
+]);
+
+export function currencyMinorDivisor(currency: string | null | undefined): number {
+  return ZERO_DECIMAL_CURRENCIES.has(String(currency ?? "").toUpperCase()) ? 1 : 100;
+}
+
 // Action aliases — normalisasi action_type yang artinya sama
 const ACTION_ALIASES: Record<string, string> = {
   complete_registration: "offsite_conversion.fb_pixel_complete_registration",
@@ -229,6 +241,7 @@ async function getCampaignInsights(actId: string, token: string, dateStr: string
 // ─────────────────────────────────────────────
 
 export function getEffectiveBalance(config: FbActConfig, balanceData: MetaBalanceData): EffectiveBalance {
+  const divisor = currencyMinorDivisor(balanceData.currency);
   const spendCapRaw = parseInt(balanceData.spend_cap ?? "0", 10);
   const amountSpentRaw = parseInt(balanceData.amount_spent ?? "0", 10);
   const balanceRaw = parseInt(balanceData.balance ?? "0", 10);
@@ -246,15 +259,15 @@ export function getEffectiveBalance(config: FbActConfig, balanceData: MetaBalanc
       const sisa = spendingLimit - amountSpentRaw;
       return { balance: sisa, balanceType: "Credit Line", spendingLimit, outstandingBalance: null };
     }
-    // Credit line tanpa spending limit → Kartu Kredit, pakai balance / 100
-    return { balance: balanceRaw / 100, balanceType: "Kartu Kredit", spendingLimit: null, outstandingBalance: null };
+    // Credit line tanpa spending limit → Kartu Kredit, pakai balance / divisor
+    return { balance: balanceRaw / divisor, balanceType: "Kartu Kredit", spendingLimit: null, outstandingBalance: null };
   }
 
   // Prepaid — cek funding_source_details
   const funding = balanceData.funding_source_details ?? {};
   const fundingType = parseInt(String(funding.type ?? "0"), 10);
   if (fundingType === 1) {
-    return { balance: balanceRaw / 100, balanceType: "Kartu Kredit", spendingLimit: null, outstandingBalance: null };
+    return { balance: balanceRaw / divisor, balanceType: "Kartu Kredit", spendingLimit: null, outstandingBalance: null };
   }
   const displayStr = funding.display_string ?? "";
   const numbers = [...displayStr.matchAll(/[\d,]+/g)].map((m) => parseInt(m[0].replace(/,/g, ""), 10));
@@ -262,7 +275,7 @@ export function getEffectiveBalance(config: FbActConfig, balanceData: MetaBalanc
     const saldo = Math.max(...numbers);
     return { balance: saldo, balanceType: "Prepaid", spendingLimit: null, outstandingBalance: null };
   }
-  return { balance: balanceRaw / 100, balanceType: "Prepaid", spendingLimit: null, outstandingBalance: null };
+  return { balance: balanceRaw / divisor, balanceType: "Prepaid", spendingLimit: null, outstandingBalance: null };
 }
 
 export function getSaldoStatus(
@@ -692,8 +705,8 @@ export async function runMetaAdsDailyReport(): Promise<void> {
         actId: act.actId,
         date: yesterdayStr,
         balance: String(balanceInfo.balance),
-        amountSpent: balanceData.amount_spent ? String(parseInt(balanceData.amount_spent) / 100) : null,
-        spendCap: balanceData.spend_cap ? String(parseInt(balanceData.spend_cap) / 100) : null,
+        amountSpent: balanceData.amount_spent ? String(parseInt(balanceData.amount_spent) / currencyMinorDivisor(balanceData.currency)) : null,
+        spendCap: balanceData.spend_cap ? String(parseInt(balanceData.spend_cap) / currencyMinorDivisor(balanceData.currency)) : null,
         effectiveBalance: String(balanceInfo.balance),
         balanceType: balanceInfo.balanceType,
         spendingLimit: balanceInfo.spendingLimit ? String(balanceInfo.spendingLimit) : null,
@@ -933,4 +946,243 @@ export async function runMetaAdsDailyReport(): Promise<void> {
   }
 
   console.log(`[MetaAdsJob] Selesai: ${success}/${total} sukses, ${failed} gagal`);
+}
+
+// ─────────────────────────────────────────────
+// On-demand single-account full sync (no Telegram)
+// ─────────────────────────────────────────────
+
+export interface SyncSingleResult {
+  success: boolean;
+  message: string;
+  date?: string;
+  balance?: number;
+  balanceType?: string;
+  statusLevel?: 0 | 1 | 2;
+  campaigns?: number;
+  breakdowns?: number;
+}
+
+/**
+ * Sync lengkap untuk 1 fb_act (balance + account insights + campaign insights +
+ * result breakdown) ke fb_act_daily_data, fb_act_campaign_daily_insights, dan
+ * fb_act_result_breakdown_daily — tanpa kirim Telegram. Dipakai oleh tombol
+ * "Sinkron" di halaman monitoring per akun.
+ *
+ * Data di-ingest untuk tanggal kemarin (WIB) supaya konsisten dengan cron
+ * harian (insight "hari ini" di Meta belum lengkap).
+ */
+export async function syncSingleFbActFull(fbActId: number): Promise<SyncSingleResult> {
+  const rows = await db
+    .select({
+      id: fbAct.id,
+      actId: fbAct.actId,
+      actName: fbAct.actName,
+      name: fbAct.name,
+      dataJson: fbAct.dataJson,
+      thresholdWarningOverride: fbAct.thresholdWarningOverride,
+      thresholdCriticalOverride: fbAct.thresholdCriticalOverride,
+      postpaidThresholdOverride: fbAct.postpaidThresholdOverride,
+      tokenId: fbAct.tokenId,
+      token: fbToken.token,
+      tokenStatus: fbToken.status,
+    })
+    .from(fbAct)
+    .leftJoin(fbToken, eq(fbToken.id, fbAct.tokenId))
+    .where(eq(fbAct.id, fbActId))
+    .limit(1);
+
+  const act = rows[0];
+  if (!act) return { success: false, message: "FB Act tidak ditemukan" };
+  if (!act.tokenId || !act.token) {
+    return { success: false, message: "FB Act belum punya token aktif" };
+  }
+  if (act.tokenStatus !== 1) {
+    return { success: false, message: "FB Token tidak aktif" };
+  }
+
+  const todayWib = nowWib();
+  const yesterdayWib = new Date(todayWib.getTime() - 24 * 60 * 60 * 1000);
+  const yesterdayStr = yesterdayWib.toISOString().slice(0, 10);
+
+  const actIdFull = act.actId.startsWith("act_") ? act.actId : `act_${act.actId}`;
+  const config: FbActConfig =
+    typeof act.dataJson === "string"
+      ? JSON.parse(act.dataJson)
+      : ((act.dataJson as FbActConfig) ?? {});
+
+  try {
+    const [balanceData, acctInsights, campInsights] = await Promise.all([
+      getMetaBalance(actIdFull, act.token),
+      getAccountInsights(actIdFull, act.token, yesterdayStr),
+      getCampaignInsights(actIdFull, act.token, yesterdayStr),
+    ]);
+
+    const accountName = balanceData.name ?? act.actName ?? act.name ?? actIdFull;
+
+    const balanceInfo = getEffectiveBalance(config, balanceData);
+    const thresholdOverrides = {
+      warning: act.thresholdWarningOverride != null ? Number(act.thresholdWarningOverride) : null,
+      critical: act.thresholdCriticalOverride != null ? Number(act.thresholdCriticalOverride) : null,
+      postpaid: act.postpaidThresholdOverride != null ? Number(act.postpaidThresholdOverride) : null,
+    };
+    const { warningMsg } = getSaldoStatus(balanceInfo.balance, balanceInfo.balanceType, thresholdOverrides);
+    const statusLevel = computeStatusLevel(balanceInfo.balance, balanceInfo.balanceType, thresholdOverrides);
+
+    const breakdown = buildResultBreakdown(config, campInsights);
+    const purchaseMetrics =
+      config.purchase_metrics && acctInsights ? getPurchaseMetrics(acctInsights) : null;
+
+    const spend = parseFloat(acctInsights?.spend ?? "0");
+    const actionsMap: Record<string, number> = {};
+    for (const a of acctInsights?.actions ?? []) actionsMap[a.action_type] = parseFloat(a.value);
+    const linkClicks = Math.round(actionsMap["link_click"] ?? 0);
+    const cpcManual = linkClicks > 0 ? spend / linkClicks : 0;
+
+    // fb_act_daily_data
+    await db
+      .insert(fbActDailyData)
+      .values({
+        fbActId: act.id,
+        actId: act.actId,
+        date: yesterdayStr,
+        balance: String(balanceInfo.balance),
+        amountSpent: balanceData.amount_spent
+          ? String(parseInt(balanceData.amount_spent) / 100)
+          : null,
+        spendCap: balanceData.spend_cap ? String(parseInt(balanceData.spend_cap) / 100) : null,
+        effectiveBalance: String(balanceInfo.balance),
+        balanceType: balanceInfo.balanceType,
+        spendingLimit: balanceInfo.spendingLimit ? String(balanceInfo.spendingLimit) : null,
+        outstandingBalance: balanceInfo.outstandingBalance
+          ? String(balanceInfo.outstandingBalance)
+          : null,
+        statusLevel,
+        warningMessage: warningMsg ?? null,
+        spend: acctInsights ? String(spend) : null,
+        impressions: acctInsights ? parseInt(acctInsights.impressions ?? "0") : null,
+        reach: acctInsights ? parseInt(acctInsights.reach ?? "0") : null,
+        frequency: acctInsights ? String(parseFloat(acctInsights.frequency ?? "0")) : null,
+        linkClicks: linkClicks || null,
+        ctr: acctInsights ? String(parseFloat(acctInsights.ctr ?? "0")) : null,
+        cpm: acctInsights ? String(parseFloat(acctInsights.cpm ?? "0")) : null,
+        cpc: linkClicks ? String(cpcManual) : null,
+        dataJson: { accountName } as any,
+      })
+      .onDuplicateKeyUpdate({
+        set: {
+          balance: String(balanceInfo.balance),
+          effectiveBalance: String(balanceInfo.balance),
+          balanceType: balanceInfo.balanceType,
+          spendingLimit: balanceInfo.spendingLimit ? String(balanceInfo.spendingLimit) : null,
+          outstandingBalance: balanceInfo.outstandingBalance
+            ? String(balanceInfo.outstandingBalance)
+            : null,
+          statusLevel,
+          warningMessage: warningMsg ?? null,
+          spend: acctInsights ? String(spend) : null,
+          impressions: acctInsights ? parseInt(acctInsights.impressions ?? "0") : null,
+          reach: acctInsights ? parseInt(acctInsights.reach ?? "0") : null,
+          frequency: acctInsights ? String(parseFloat(acctInsights.frequency ?? "0")) : null,
+          linkClicks: linkClicks || null,
+          ctr: acctInsights ? String(parseFloat(acctInsights.ctr ?? "0")) : null,
+          cpm: acctInsights ? String(parseFloat(acctInsights.cpm ?? "0")) : null,
+          cpc: linkClicks ? String(cpcManual) : null,
+        },
+      });
+
+    // fb_act_campaign_daily_insights
+    for (const camp of campInsights) {
+      if (!camp.campaign_id) continue;
+      const campSpend = parseFloat(camp.spend ?? "0");
+      const campActions = normalizeActions(camp.actions ?? []);
+      const campLinkClicks = Math.round(campActions["link_click"] ?? 0);
+      const trafficKws = parseKeywordTraffic(config.keyword_traffic);
+      const isTraffic =
+        trafficKws.length > 0 && trafficKws.some((kw) => (camp.campaign_name ?? "").includes(kw));
+      let resolvedPrimaryActionType: string | null = null;
+      for (const at of Object.keys(campActions)) {
+        if (PRIMARY_CONVERSION_TYPES.has(at) && campActions[at] > 0) {
+          resolvedPrimaryActionType = at;
+          break;
+        }
+      }
+
+      await db
+        .insert(fbActCampaignDailyInsights)
+        .values({
+          fbActId: act.id,
+          actId: act.actId,
+          date: yesterdayStr,
+          campaignId: camp.campaign_id,
+          campaignName: camp.campaign_name ?? null,
+          spend: campSpend ? String(campSpend) : null,
+          linkClicks: campLinkClicks || null,
+          isTrafficCampaign: isTraffic ? 1 : 0,
+          resolvedPrimaryActionType,
+          dataJson: { actions: camp.actions } as any,
+        })
+        .onDuplicateKeyUpdate({
+          set: {
+            campaignName: camp.campaign_name ?? null,
+            spend: campSpend ? String(campSpend) : null,
+            linkClicks: campLinkClicks || null,
+            isTrafficCampaign: isTraffic ? 1 : 0,
+            resolvedPrimaryActionType,
+          },
+        });
+    }
+
+    // fb_act_result_breakdown_daily
+    for (const bd of breakdown) {
+      await db
+        .insert(fbActResultBreakdownDaily)
+        .values({
+          fbActId: act.id,
+          actId: act.actId,
+          date: yesterdayStr,
+          label: bd.label,
+          resultType: 0,
+          results: bd.results,
+          spent: String(bd.spent),
+          totalPurchase: purchaseMetrics?.totalPurchase ?? null,
+          purchaseValue: purchaseMetrics ? String(purchaseMetrics.purchaseValue) : null,
+          costPerPurchase: purchaseMetrics ? String(purchaseMetrics.costPerPurchase) : null,
+          roas: purchaseMetrics ? String(purchaseMetrics.roas) : null,
+          dataJson: { cpr: bd.cpr, emoji: bd.emoji } as any,
+        })
+        .onDuplicateKeyUpdate({
+          set: {
+            results: bd.results,
+            spent: String(bd.spent),
+            totalPurchase: purchaseMetrics?.totalPurchase ?? null,
+            purchaseValue: purchaseMetrics ? String(purchaseMetrics.purchaseValue) : null,
+            costPerPurchase: purchaseMetrics ? String(purchaseMetrics.costPerPurchase) : null,
+            roas: purchaseMetrics ? String(purchaseMetrics.roas) : null,
+          },
+        });
+    }
+
+    return {
+      success: true,
+      message: "Sync berhasil",
+      date: yesterdayStr,
+      balance: balanceInfo.balance,
+      balanceType: balanceInfo.balanceType,
+      statusLevel,
+      campaigns: campInsights.length,
+      breakdowns: breakdown.length,
+    };
+  } catch (e: any) {
+    const errMsg = String(e?.message ?? e);
+    // Tandai token invalid kalau OAuthException
+    const isOAuthError =
+      /OAuthException|oauth|access[\s_-]?token|invalid[\s_-]?token|code\s*[:=]\s*190/i.test(errMsg);
+    if (isOAuthError && act.tokenId) {
+      try {
+        await db.update(fbToken).set({ status: 0 }).where(eq(fbToken.id, act.tokenId));
+      } catch {}
+    }
+    return { success: false, message: `Gagal fetch dari Meta API: ${errMsg}` };
+  }
 }

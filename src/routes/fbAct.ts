@@ -452,6 +452,16 @@ router.post('/validate', zValidator('json', validatePayload), async (c) => {
       }
     } catch { /* silent — purchase stats best-effort */ }
 
+    // Account Spending Limit + Remaining Amount
+    // spend_cap = limit; amount_spent = sudah terpakai terhadap limit.
+    // spend_cap "0"/kosong → tidak ada limit (unlimited).
+    const spendCapNum = Number(data.spend_cap ?? 0);
+    const amountSpentNum = Number(data.amount_spent ?? 0);
+    const hasSpendingLimit = Number.isFinite(spendCapNum) && spendCapNum > 0;
+    const spendingLimitRemaining = hasSpendingLimit
+      ? String(Math.max(0, spendCapNum - amountSpentNum))
+      : null;
+
     return c.json({
       success: true,
       data: {
@@ -467,6 +477,8 @@ router.post('/validate', zValidator('json', validatePayload), async (c) => {
         amountSpent: data.amount_spent,
         balance: data.balance,
         spendCap: data.spend_cap,
+        hasSpendingLimit,
+        spendingLimitRemaining,
         timezoneName: data.timezone_name,
         timezoneOffsetHours: data.timezone_offset_hours_utc,
         businessCountryCode: data.business_country_code,

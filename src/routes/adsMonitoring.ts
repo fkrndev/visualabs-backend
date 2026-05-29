@@ -19,6 +19,7 @@ import {
   users,
   profiles,
 } from '../db/schema';
+import { syncSingleFbActFull } from '../jobs/metaAdsDailyReport';
 import { requireAuth } from '../middleware/auth';
 import { role } from '../utils/auth/role';
 import { ROLE_ADMIN } from '../utils/auth/permissions';
@@ -892,6 +893,30 @@ router.get('/accounts/:fbActId/thresholds', async (c) => {
       effective: eff,
     },
   });
+});
+
+// ───────────────────────── POST /accounts/:fbActId/sync ─────────────────────────
+// Tarik data terbaru dari Meta (FB) untuk 1 akun, simpan ke DB.
+router.post('/accounts/:fbActId/sync', async (c) => {
+  const scope = await resolveScope(c);
+  if ('error' in scope) return scope.error;
+  const fbActId = Number(c.req.param('fbActId'));
+  if (!Number.isInteger(fbActId)) {
+    return c.json({ success: false, message: 'Invalid fbActId' }, 400);
+  }
+  const res = await loadFbActForScope(c, scope, fbActId);
+  if ('error' in res) return res.error;
+
+  // Hanya akun dengan token aktif yang bisa di-sync
+  if (res.row.tokenId == null || Number(res.row.tokenStatus ?? 0) !== 1) {
+    return c.json(
+      { success: false, message: 'Akun tidak aktif — token Meta belum terhubung / tidak valid' },
+      400,
+    );
+  }
+
+  const result = await syncSingleFbActFull(fbActId);
+  return c.json({ success: result.success, message: result.message, data: result }, result.success ? 200 : 502);
 });
 
 const thresholdPutSchema = z.object({
