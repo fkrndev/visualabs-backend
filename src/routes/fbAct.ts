@@ -577,4 +577,182 @@ router.post('/validate-results', zValidator('json', validateResultsPayload), asy
   }
 });
 
+// ── Auto import: ambil daftar ad account dari token (me/adaccounts) ─────
+const ACCOUNT_STATUS_MAP: Record<number, string> = {
+  1: 'Aktif',
+  2: 'Dinonaktifkan',
+  3: 'Tagihan Belum Lunas',
+  7: 'Menunggu Review Risiko',
+  8: 'Menunggu Pelunasan',
+  9: 'Masa Tenggang',
+  100: 'Akan Ditutup',
+  101: 'Ditutup',
+  201: 'Aktif (Apapun)',
+  202: 'Ditutup (Apapun)',
+};
+
+const discoverPayload = z
+  .object({
+    tokenId: z.coerce.number().int().optional(),
+    token: z.string().min(1).optional(),
+  })
+  .refine((v) => v.tokenId != null || (v.token != null && v.token.length > 0), {
+    message: 'tokenId atau token wajib diisi',
+  });
+
+router.post('/discover', zValidator('json', discoverPayload), async (c) => {
+  const { tokenId, token: rawToken } = c.req.valid('json');
+
+  let accessToken = rawToken ?? '';
+  if (tokenId != null) {
+    const tk = await db
+      .select({ token: fbToken.token, status: fbToken.status })
+      .from(fbToken)
+      .where(eq(fbToken.id, tokenId))
+      .limit(1);
+    if (!tk[0]) return c.json({ success: false, message: 'Token tidak ditemukan' }, 404);
+    accessToken = tk[0].token;
+  }
+  if (!accessToken) return c.json({ success: false, message: 'Token kosong' }, 400);
+
+  try {
+    const fields =
+      'account_id,name,currency,account_status,disable_reason,balance,amount_spent,spend_cap,is_prepay_account,business{id,name}';
+    let nextUrl: string | null = (() => {
+      const u = new URL('https://graph.facebook.com/v20.0/me/adaccounts');
+      u.searchParams.set('fields', fields);
+      u.searchParams.set('limit', '200');
+      u.searchParams.set('access_token', accessToken);
+      return u.toString();
+    })();
+
+    const raw: any[] = [];
+    let guard = 0;
+    while (nextUrl && guard < 25) {
+      guard++;
+      const res = await fetch(nextUrl);
+      const data: any = await res.json();
+      if (data.error) {
+        return c.json({
+          success: false,
+          message: data.error.message || 'Gagal ambil daftar akun',
+          error: data.error,
+        });
+      }
+      if (Array.isArray(data.data)) raw.push(...data.data);
+      nextUrl = data.paging?.next ?? null;
+    }
+
+    // actId yang sudah ada di sistem (normalisasi: buang prefix act_)
+    const existingRows = await db.select({ actId: fbAct.actId }).from(fbAct);
+    const existing = new Set(
+      existingRows.map((r) => String(r.actId ?? '').replace(/^act_/, '')),
+    );
+
+    const accounts = raw.map((a) => {
+      const numericId = String(a.account_id ?? '').replace(/^act_/, '');
+      const accountStatus = Number(a.account_status);
+      return {
+        actId: numericId,
+        name: a.name ?? null,
+        currency: a.currency ?? null,
+        accountStatus,
+        accountStatusLabel: ACCOUNT_STATUS_MAP[accountStatus] ?? `Status ${accountStatus}`,
+        isActive: accountStatus === 1,
+        balance: a.balance ?? null,
+        amountSpent: a.amount_spent ?? null,
+        spendCap: a.spend_cap ?? null,
+        isPrepayAccount: a.is_prepay_account ?? null,
+        business: a.business ? { id: a.business.id, name: a.business.name } : null,
+        alreadyExists: existing.has(numericId),
+      };
+    });
+
+    return c.json({
+      success: true,
+      data: {
+        total: accounts.length,
+        newCount: accounts.filter((a) => !a.alreadyExists).length,
+        accounts,
+      },
+    });
+  } catch (error: any) {
+    console.error(error);
+    return c.json(
+      { success: false, message: 'Gagal menghubungi Meta API: ' + (error?.message || error) },
+      500,
+    );
+  }
+});
+
+// ── Auto import: simpan banyak akun terpilih sekaligus ─────────────────
+const bulkPayload = z.object({
+  customerId: z.coerce.number().int(),
+  subscriptionId: z.coerce.number().int(),
+  tokenId: z.coerce.number().int().optional().nullable(),
+  accounts: z
+    .array(
+      z.object({
+        actId: z.string().min(1),
+        actName: z.string().optional().nullable(),
+        name: z.string().optional().nullable(),
+      }),
+    )
+    .min(1),
+});
+
+router.post('/bulk', zValidator('json', bulkPayload), async (c) => {
+  const payload = c.req.valid('json');
+
+  const existingRows = await db.select({ actId: fbAct.actId }).from(fbAct);
+  const existing = new Set(
+    existingRows.map((r) => String(r.actId ?? '').replace(/^act_/, '')),
+  );
+
+  const seen = new Set<string>();
+  const toInsert: (typeof fbAct.$inferInsert)[] = [];
+  let skipped = 0;
+  for (const a of payload.accounts) {
+    const numericId = String(a.actId).replace(/^act_/, '').trim();
+    if (!numericId) continue;
+    if (existing.has(numericId) || seen.has(numericId)) {
+      skipped++;
+      continue;
+    }
+    seen.add(numericId);
+    toInsert.push({
+      customerId: payload.customerId,
+      subscriptionId: payload.subscriptionId,
+      tokenId: payload.tokenId ?? null,
+      actId: numericId,
+      actName: a.actName ?? null,
+      name: a.name ?? a.actName ?? null,
+      dataJson: null,
+    });
+  }
+
+  if (!toInsert.length) {
+    return c.json(
+      { success: false, message: 'Tidak ada akun baru untuk ditambahkan', created: 0, skipped },
+      400,
+    );
+  }
+
+  try {
+    await db.insert(fbAct).values(toInsert);
+    return c.json({
+      success: true,
+      message: `${toInsert.length} akun ditambahkan${skipped ? `, ${skipped} dilewati (sudah ada)` : ''}`,
+      created: toInsert.length,
+      skipped,
+    });
+  } catch (error: any) {
+    console.error(error);
+    return c.json(
+      { success: false, message: 'Gagal menambahkan akun: ' + (error?.message || error) },
+      500,
+    );
+  }
+});
+
 export default router;

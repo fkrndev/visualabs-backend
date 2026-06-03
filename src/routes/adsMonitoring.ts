@@ -830,14 +830,17 @@ router.get('/accounts/:fbActId/results', zValidator('query', rangeSchema), async
     .where(and(...conds))
     .orderBy(desc(fbActResultBreakdownDaily.date));
 
-  // Detect purchase-metrics availability via result config
+  // Detect result-type availability + map label → resultType via config
   const cfg = await db
-    .select({ resultType: fbActResultConfig.resultType })
+    .select({ label: fbActResultConfig.label, resultType: fbActResultConfig.resultType })
     .from(fbActResultConfig)
     .where(eq(fbActResultConfig.actId, res.row.actId));
+  const labelTypes: Record<string, string> = {};
+  for (const r of cfg) labelTypes[r.label] = r.resultType;
   const hasPurchase = cfg.some((r) => r.resultType === 'purchase');
+  const hasMessage = cfg.some((r) => r.resultType === 'message');
 
-  return c.json({ success: true, data: { rows, hasPurchase } });
+  return c.json({ success: true, data: { rows, hasPurchase, hasMessage, labelTypes } });
 });
 
 // ───────────────────────── /accounts/:fbActId/notifications ─────────────────────────
