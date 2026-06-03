@@ -3,7 +3,7 @@ import { verify } from "hono/jwt";
 import { config } from "dotenv";
 import { TYPE_CUSTOMER } from "../constants/auth";
 import type { Context, Next } from "hono";
-import { hasPermission, getEffectiveRole } from "../utils/auth/permissions";
+import { isManagementLevel } from "../utils/auth/permissions";
 
 config();
 
@@ -104,52 +104,40 @@ export const extractAuthInfo = async (authHeader?: string): Promise<{
   return { userId, role, customerId, isCustomer, isAdmin, jwtPayload };
 };
 
-// Permission middleware
-export const requirePermission = (requiredPermission: string) => {
-  return async (c: Context, next: Next) => {
-    const jwtPayload = c.get('jwtPayload') as JwtPayload;
-    
-    if (!jwtPayload) {
-      return c.json({
-        success: false,
-        message: "Unauthorized: No JWT payload found"
-      }, 401);
+/**
+ * Management gate — allows only Dev / Admin / Owner. Reads the role from the
+ * signed JWT payload (`rol`). Must run AFTER `requireAuth` so `jwtPayload` is set.
+ */
+export const requireManagement = async (c: Context, next: Next) => {
+  const jwtPayload = c.get('jwtPayload') as JwtPayload | undefined;
+
+  if (!jwtPayload) {
+    return c.json({
+      success: false,
+      message: "Unauthorized: No JWT payload found"
+    }, 401);
+  }
+
+  let role: number | null | undefined;
+  if (typeof jwtPayload.rol === 'string') {
+    try {
+      role = JSON.parse(jwtPayload.rol);
+    } catch {
+      role = undefined;
     }
+  } else {
+    role = jwtPayload.rol as number | null | undefined;
+  }
 
-    const userId = Number(jwtPayload.sub);
-    let role: number | null | undefined;
+  if (!isManagementLevel(role)) {
+    return c.json({
+      success: false,
+      message: "Forbidden — Dev/Admin/Owner only"
+    }, 403);
+  }
 
-    if (typeof jwtPayload.rol === 'string') {
-      try {
-        role = JSON.parse(jwtPayload.rol);
-      } catch {
-        role = undefined;
-      }
-    } else {
-      role = jwtPayload.rol as number | null | undefined;
-    }
+  c.set('userId', Number(jwtPayload.sub));
+  c.set('userRole', role);
 
-    if (role === null || role === undefined) {
-      return c.json({
-        success: false,
-        message: "Unauthorized: Invalid user role"
-      }, 403);
-    }
-
-    // Use effective role (fallback to default if permission system disabled)
-    const effectiveRole = getEffectiveRole(role);
-
-    if (!hasPermission(effectiveRole, requiredPermission)) {
-      return c.json({
-        success: false,
-        message: `Forbidden: Missing required permission: ${requiredPermission}`
-      }, 403);
-    }
-
-    // Store user info in context for use in handlers
-    c.set('userId', userId);
-    c.set('userRole', effectiveRole);
-
-    await next();
-  };
+  await next();
 };

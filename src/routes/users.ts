@@ -7,8 +7,7 @@ import { db } from '../db/client';
 import { profiles, users } from '../db/schema';
 import { cleanEmail, cleanPhone } from '../utils/normalizers';
 import { hashPassword } from '../utils/security';
-import { requireAuth } from '../middleware/auth';
-import { requirePermission, PERMISSION } from '../utils/auth/permissions';
+import { requireAuth, requireManagement } from '../middleware/auth';
 import { rateLimit } from '../middleware/rateLimit';
 import { validateIdParam, getValidatedId } from '../middleware/validation';
 import { logAuditEvent, getClientIp, getUserAgent } from '../utils/audit';
@@ -49,7 +48,7 @@ const updateUserPayload = userPayload.partial().extend({
   password: z.string().min(8).optional(),
 });
 
-router.get('/', rateLimit({ windowMs: 60000, maxRequests: 100 }), requireAuth, zValidator('query', paginationQuery), async (c) => {
+router.get('/', rateLimit({ windowMs: 60000, maxRequests: 100 }), requireAuth, requireManagement, zValidator('query', paginationQuery), async (c) => {
   const {
     page,
     limit,
@@ -127,7 +126,7 @@ router.get('/', rateLimit({ windowMs: 60000, maxRequests: 100 }), requireAuth, z
   });
 });
 
-router.get('/:id', requireAuth, validateIdParam('id'), async (c) => {
+router.get('/:id', requireAuth, requireManagement, validateIdParam('id'), async (c) => {
   const id = getValidatedId(c);
 
   const user = await fetchEntityWithProfile(users, profiles, id, 'userId');
@@ -142,7 +141,7 @@ router.get('/:id', requireAuth, validateIdParam('id'), async (c) => {
   return c.json({ success: true, data: sanitizedUser });
 });
 
-router.post('/', rateLimit({ windowMs: 60000, maxRequests: 20 }), requireAuth, zValidator('json', userPayload), async (c) => {
+router.post('/', rateLimit({ windowMs: 60000, maxRequests: 20 }), requireAuth, requireManagement, zValidator('json', userPayload), async (c) => {
   const payload = c.req.valid('json');
 
   const { email: rawEmail, username: rawUsername, phone: rawPhone, password, name, telegramUsername, role } =
@@ -246,7 +245,7 @@ router.post('/', rateLimit({ windowMs: 60000, maxRequests: 20 }), requireAuth, z
   }
 });
 
-router.put('/:id', rateLimit({ windowMs: 60000, maxRequests: 50 }), requireAuth, validateIdParam('id'), zValidator('json', updateUserPayload), async (c) => {
+router.put('/:id', rateLimit({ windowMs: 60000, maxRequests: 50 }), requireAuth, requireManagement, validateIdParam('id'), zValidator('json', updateUserPayload), async (c) => {
   const id = getValidatedId(c);
   const payload = c.req.valid('json');
 
@@ -355,7 +354,7 @@ router.put('/:id', rateLimit({ windowMs: 60000, maxRequests: 50 }), requireAuth,
   }
 });
 
-router.delete('/:id', rateLimit({ windowMs: 60000, maxRequests: 30 }), requireAuth, validateIdParam('id'), async (c) => {
+router.delete('/:id', rateLimit({ windowMs: 60000, maxRequests: 30 }), requireAuth, requireManagement, validateIdParam('id'), async (c) => {
   const id = getValidatedId(c);
 
   await db.delete(users).where(eq(users.id, id));

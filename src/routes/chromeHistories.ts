@@ -12,6 +12,7 @@ import {
   sortsQuerySchema,
   type ColumnMap,
 } from '../utils/queryFilters';
+import { requireAuth, requireManagement } from '../middleware/auth';
 
 const router = new Hono();
 
@@ -120,8 +121,8 @@ router.post('/track', zValidator('json', trackPayload), async (c) => {
   return c.json({ success: true, action: 'created', id: historyId }, 201);
 });
 
-// GET / — list histories
-router.get('/', zValidator('query', paginationQuery), async (c) => {
+// GET / — list histories (admin data: Dev/Admin/Owner only)
+router.get('/', requireAuth, requireManagement, zValidator('query', paginationQuery), async (c) => {
   const {
     page,
     limit,
@@ -197,7 +198,7 @@ router.get('/', zValidator('query', paginationQuery), async (c) => {
   });
 });
 
-router.delete('/:id', async (c) => {
+router.delete('/:id', requireAuth, requireManagement, async (c) => {
   const id = Number(c.req.param('id'));
   if (Number.isNaN(id)) return c.json({ success: false, message: 'ID tidak valid' }, 400);
 

@@ -22,7 +22,7 @@ import {
 import { syncSingleFbActFull } from '../jobs/metaAdsDailyReport';
 import { requireAuth } from '../middleware/auth';
 import { role } from '../utils/auth/role';
-import { ROLE_ADMIN } from '../utils/auth/permissions';
+import { isManagementLevel } from '../utils/auth/permissions';
 import type { Context, Next } from 'hono';
 
 const router = new Hono();
@@ -48,7 +48,7 @@ async function resolveScope(c: Context): Promise<Scope | { error: Response }> {
     };
   }
   const userRole = await role(userId);
-  if (userRole === ROLE_ADMIN) {
+  if (isManagementLevel(userRole)) {
     return { kind: 'admin', userId };
   }
   // Resolve advertiser scope: subscriptions.advertiserId == userId

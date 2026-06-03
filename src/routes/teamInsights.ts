@@ -14,7 +14,7 @@ import {
 } from '../db/schema';
 import { requireAuth } from '../middleware/auth';
 import { role } from '../utils/auth/role';
-import { ROLE_ADMIN } from '../utils/auth/permissions';
+import { isManagementLevel } from '../utils/auth/permissions';
 import type { Context, Next } from 'hono';
 
 const router = new Hono();
@@ -26,8 +26,8 @@ const adminOnly = async (c: Context, next: Next) => {
     return c.json({ success: false, message: 'Unauthorized' }, 401);
   }
   const userRole = await role(userId);
-  if (userRole !== ROLE_ADMIN) {
-    return c.json({ success: false, message: 'Forbidden — admin only' }, 403);
+  if (!isManagementLevel(userRole)) {
+    return c.json({ success: false, message: 'Forbidden — Dev/Admin/Owner only' }, 403);
   }
   await next();
 };

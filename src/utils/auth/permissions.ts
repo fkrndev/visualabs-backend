@@ -1,92 +1,26 @@
-// Role definitions
-export const ROLE_ADMIN = 1;
-export const ROLE_MANAGER = 2;
-export const ROLE_STAFF = 3;
-export const ROLE_VIEWER = 4;
+// Role definitions — MUST stay in sync with the frontend ROLE_OPTIONS
+// (v-auto-frontend src/routes/users/admin/columns.ts). These IDs are the raw
+// values stored in `users.role` (0–6).
+export const ROLE_DEV = 0; // Developer / super admin
+export const ROLE_ADMIN = 1; // Administrator
+export const ROLE_OWNER = 2; // Business owner
+export const ROLE_CSS = 3; // Customer Support Specialist
+export const ROLE_ADVERTISER = 4; // Ad manager (data-scoped via advertiserScope)
+export const ROLE_HRD = 5; // Human Resources
+export const ROLE_AKUNTAN = 6; // Accountant
 
-// Permission definitions
-export const PERMISSION = {
-  // Customer permissions
-  CUSTOMER_VIEW: 'customer:view',
-  CUSTOMER_CREATE: 'customer:create',
-  CUSTOMER_UPDATE: 'customer:update',
-  CUSTOMER_DELETE: 'customer:delete',
-  CUSTOMER_RESTORE: 'customer:restore',
-  CUSTOMER_EXPORT: 'customer:export',
-  CUSTOMER_BULK_DELETE: 'customer:bulk_delete',
-  CUSTOMER_BULK_UPDATE: 'customer:bulk_update',
-
-  // User permissions
-  USER_VIEW: 'user:view',
-  USER_CREATE: 'user:create',
-  USER_UPDATE: 'user:update',
-  USER_DELETE: 'user:delete',
-
-  // Admin permissions
-  ADMIN_VIEW: 'admin:view',
-  ADMIN_CREATE: 'admin:create',
-  ADMIN_UPDATE: 'admin:update',
-  ADMIN_DELETE: 'admin:delete',
-} as const;
-
-// Check if permission system is enabled
-function isPermissionSystemEnabled(): boolean {
-  return process.env.ENABLE_PERMISSION_SYSTEM !== 'false';
-}
-
-// Get default role when permission system is disabled
-function getDefaultRole(): number {
-  const defaultRoleStr = process.env.DEFAULT_ROLE_WHEN_DISABLED;
-  return defaultRoleStr ? parseInt(defaultRoleStr) : ROLE_ADMIN;
-}
-
-// Role permissions mapping
-export const ROLE_PERMISSIONS: Record<number, string[]> = {
-  [ROLE_ADMIN]: [
-    // All permissions
-    ...Object.values(PERMISSION),
-  ],
-  [ROLE_MANAGER]: [
-    PERMISSION.CUSTOMER_VIEW,
-    PERMISSION.CUSTOMER_CREATE,
-    PERMISSION.CUSTOMER_UPDATE,
-    PERMISSION.CUSTOMER_DELETE,
-    PERMISSION.CUSTOMER_RESTORE,
-    PERMISSION.CUSTOMER_EXPORT,
-    PERMISSION.CUSTOMER_BULK_DELETE,
-    PERMISSION.CUSTOMER_BULK_UPDATE,
-    PERMISSION.USER_VIEW,
-  ],
-  [ROLE_STAFF]: [
-    PERMISSION.CUSTOMER_VIEW,
-    PERMISSION.CUSTOMER_CREATE,
-    PERMISSION.CUSTOMER_UPDATE,
-  ],
-  [ROLE_VIEWER]: [
-    PERMISSION.CUSTOMER_VIEW,
-  ],
-};
-
-export function hasPermission(userRole: number, requiredPermission: string): boolean {
-  // If permission system is disabled, grant all permissions
-  if (!isPermissionSystemEnabled()) {
-    return true;
-  }
-  
-  const permissions = ROLE_PERMISSIONS[userRole] || [];
-  return permissions.includes(requiredPermission);
-}
-
-export function requirePermission(requiredPermission: string) {
-  return (userRole: number): boolean => {
-    return hasPermission(userRole, requiredPermission);
-  };
-}
-
-// Get effective user role (fallback to default if permission system disabled)
-export function getEffectiveRole(userRole: number): number {
-  if (!isPermissionSystemEnabled()) {
-    return getDefaultRole();
-  }
-  return userRole;
+/**
+ * Access model (kept intentionally simple):
+ *   - Any logged-in user may perform any normal action (e.g. customer CRUD).
+ *   - Only Dev / Admin / Owner are "management level":
+ *       • users list + CRUD
+ *       • /chrome-histories (admin list/delete)
+ *       • /team-insights (admin)
+ *       • full data scope in ads monitoring (advertiserScope / adsMonitoring);
+ *         other roles are scoped to their own subscriptions.
+ *
+ * There is no fine-grained permission-string system anymore.
+ */
+export function isManagementLevel(role: number | null | undefined): boolean {
+  return role === ROLE_DEV || role === ROLE_ADMIN || role === ROLE_OWNER;
 }

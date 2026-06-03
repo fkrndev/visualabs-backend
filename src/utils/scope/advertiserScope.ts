@@ -4,7 +4,7 @@ import { eq, inArray } from "drizzle-orm";
 import { db } from "../../db/client";
 import { subscriptions, fbAct } from "../../db/schema";
 import { role } from "../auth/role";
-import { ROLE_ADMIN } from "../auth/permissions";
+import { isManagementLevel } from "../auth/permissions";
 
 export type AdvertiserScope =
   | { kind: "admin"; userId: number }
@@ -38,7 +38,7 @@ export async function resolveAdvertiserScope(c: Context): Promise<ScopeResult> {
   }
 
   const userRole = await role(userId);
-  if (userRole === ROLE_ADMIN) {
+  if (isManagementLevel(userRole)) {
     return { ok: true, scope: { kind: "admin", userId } };
   }
 
