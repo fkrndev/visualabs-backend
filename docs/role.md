@@ -14,13 +14,14 @@ serta konstanta di `src/utils/auth/permissions.ts`.
 | 4 | **Advertiser** | Ad manager |
 | 5 | **HRD** | Human Resources |
 | 6 | **Akuntan** | Accountant |
+| 7 | **Head Advertiser** | Kepala divisi iklan (management level) |
 
 ### Aturan akses
 
 Tidak ada sistem permission string yang detail (sudah dihapus). Aturannya sederhana:
 
 1. **Semua user yang login bisa melakukan apa saja** — mis. CRUD customer, dll.
-2. **Hanya Dev (0), Admin (1), Owner (2)** yang boleh mengakses area manajemen:
+2. **Hanya Dev (0), Admin (1), Owner (2), Head Advertiser (7)** yang boleh mengakses area manajemen:
    - **Users**: list + CRUD (`/users`)
    - **Chrome Histories**: list + delete (`/chrome-histories`)
    - **Team Insights**: `/team-insights`
@@ -33,7 +34,7 @@ helper `isManagementLevel(role)` di `src/utils/auth/permissions.ts`.
 
 ### Data scope iklan (terpisah)
 
-Untuk monitoring iklan (`advertiserScope` / `adsMonitoring`), hanya **Dev, Admin &
-Owner** (`isManagementLevel`) yang melihat seluruh data; role lain di-scope ke
-subscription miliknya sendiri (`subscriptions.advertiserId == userId`). Ini soal
-*visibilitas data*, bukan gate aksi.
+Untuk monitoring iklan (`advertiserScope` / `adsMonitoring`), hanya **Dev, Admin,
+Owner & Head Advertiser** (`isManagementLevel`) yang melihat seluruh data; role lain
+di-scope ke subscription miliknya sendiri (`subscriptions.advertiserId == userId`).
+Ini soal *visibilitas data*, bukan gate aksi.

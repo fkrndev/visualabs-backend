@@ -41,7 +41,7 @@ const userPayload = z.object({
   password: z.string().min(8).optional(),
   name: z.string().min(1).optional(),
   telegramUsername: z.string().trim().max(64).optional().nullable(),
-  role: z.coerce.number().int().min(0).max(6).optional(),
+  role: z.coerce.number().int().min(0).max(7).optional(),
 });
 
 const updateUserPayload = userPayload.partial().extend({
