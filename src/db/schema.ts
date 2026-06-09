@@ -1,1204 +1,1357 @@
 import {
-  bigint,
-  date,
-  decimal,
-  index,
-  int,
-  json,
-  longtext,
-  mysqlEnum,
-  mysqlTable,
-  serial,
-  text,
-  timestamp,
-  tinyint,
-  uniqueIndex,
-  varchar,
-} from "drizzle-orm/mysql-core";
-import { relations } from "drizzle-orm";
+    bigint,
+    date,
+    decimal,
+    index,
+    int,
+    json,
+    longtext,
+    mysqlEnum,
+    mysqlTable,
+    serial,
+    text,
+    timestamp,
+    tinyint,
+    uniqueIndex,
+    varchar,
+} from 'drizzle-orm/mysql-core';
+import { relations } from 'drizzle-orm';
 
 export type JsonRecord = Record<string, unknown> | null;
 
 export const refreshTokens = mysqlTable(
-  "refresh_tokens",
-  {
-    id: int("id").autoincrement().primaryKey(),
-    userId: int("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
-    token: varchar("token", { length: 255 }).notNull(),
-    expiresAt: timestamp("expires_at").notNull(),
-    revokedAt: timestamp("revoked_at"),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
-  },
-  (table) => [
-    uniqueIndex("refresh_tokens_token_unique").on(table.token),
-    index("refresh_tokens_user_idx").on(table.userId),
-  ],
+    'refresh_tokens',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        userId: int('user_id')
+            .notNull()
+            .references(() => users.id, { onDelete: 'cascade' }),
+        token: varchar('token', { length: 255 }).notNull(),
+        expiresAt: timestamp('expires_at').notNull(),
+        revokedAt: timestamp('revoked_at'),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [
+        uniqueIndex('refresh_tokens_token_unique').on(table.token),
+        index('refresh_tokens_user_idx').on(table.userId),
+    ]
 );
 
 export const customerRefreshTokens = mysqlTable(
-  "customer_refresh_tokens",
-  {
-    id: int("id").autoincrement().primaryKey(),
-    customerId: int("customer_id")
-      .notNull()
-      .references(() => customers.id, { onDelete: "cascade" }),
-    token: varchar("token", { length: 255 }).notNull(),
-    expiresAt: timestamp("expires_at").notNull(),
-    revokedAt: timestamp("revoked_at"),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
-  },
-  (table) => [
-    uniqueIndex("crt_token_unique").on(table.token),
-    index("crt_customer_idx").on(table.customerId),
-  ],
+    'customer_refresh_tokens',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        customerId: int('customer_id')
+            .notNull()
+            .references(() => customers.id, { onDelete: 'cascade' }),
+        token: varchar('token', { length: 255 }).notNull(),
+        expiresAt: timestamp('expires_at').notNull(),
+        revokedAt: timestamp('revoked_at'),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [
+        uniqueIndex('crt_token_unique').on(table.token),
+        index('crt_customer_idx').on(table.customerId),
+    ]
 );
 
 export const customers = mysqlTable(
-  "customers",
-  {
-    id: int("id").autoincrement().primaryKey(),
-    email: varchar("email", { length: 191 }),
-    username: varchar("username", { length: 100 }),
-    phone: varchar("phone", { length: 32 }),
-    fbid: varchar("fbid", { length: 191 }),
-    googleId: varchar("googleid", { length: 191 }),
-    password: varchar("password", { length: 255 }),
-    dataJson: json("data_json").$type<JsonRecord>(),
-    deletedAt: timestamp("deleted_at"),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
-  },
-  (table) => [
-    uniqueIndex("customers_email_unique").on(table.email),
-    uniqueIndex("customers_username_unique").on(table.username),
-    uniqueIndex("customers_phone_unique").on(table.phone),
-    uniqueIndex("customers_fbid_unique").on(table.fbid),
-    uniqueIndex("customers_googleid_unique").on(table.googleId),
-    index("customers_deleted_at_idx").on(table.deletedAt),
-    index("customers_created_at_idx").on(table.createdAt),
-    index("customers_updated_at_idx").on(table.updatedAt),
-    // Composite index for common queries
-    index("customers_deleted_created_idx").on(table.deletedAt, table.createdAt),
-  ],
+    'customers',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        email: varchar('email', { length: 191 }),
+        username: varchar('username', { length: 100 }),
+        phone: varchar('phone', { length: 32 }),
+        fbid: varchar('fbid', { length: 191 }),
+        googleId: varchar('googleid', { length: 191 }),
+        password: varchar('password', { length: 255 }),
+        dataJson: json('data_json').$type<JsonRecord>(),
+        deletedAt: timestamp('deleted_at'),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [
+        uniqueIndex('customers_email_unique').on(table.email),
+        uniqueIndex('customers_username_unique').on(table.username),
+        uniqueIndex('customers_phone_unique').on(table.phone),
+        uniqueIndex('customers_fbid_unique').on(table.fbid),
+        uniqueIndex('customers_googleid_unique').on(table.googleId),
+        index('customers_deleted_at_idx').on(table.deletedAt),
+        index('customers_created_at_idx').on(table.createdAt),
+        index('customers_updated_at_idx').on(table.updatedAt),
+        // Composite index for common queries
+        index('customers_deleted_created_idx').on(table.deletedAt, table.createdAt),
+    ]
 );
 
 export const customerProfiles = mysqlTable(
-  "customer_profiles",
-  {
-    id: int("id").autoincrement().primaryKey(),
-    customerId: int("customer_id")
-      .notNull()
-      .references(() => customers.id, { onDelete: "cascade" }),
-    name: varchar("name", { length: 150 }),
-    email: varchar("email", { length: 191 }),
-    phone: varchar("phone", { length: 32 }),
-    dataJson: json("data_json").$type<JsonRecord>(),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
-  },
-  (table) => [
-    index("customer_profiles_customer_idx").on(table.customerId),
-    uniqueIndex("customer_profiles_customer_unique").on(table.customerId),
-  ],
+    'customer_profiles',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        customerId: int('customer_id')
+            .notNull()
+            .references(() => customers.id, { onDelete: 'cascade' }),
+        name: varchar('name', { length: 150 }),
+        email: varchar('email', { length: 191 }),
+        phone: varchar('phone', { length: 32 }),
+        dataJson: json('data_json').$type<JsonRecord>(),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [
+        index('customer_profiles_customer_idx').on(table.customerId),
+        uniqueIndex('customer_profiles_customer_unique').on(table.customerId),
+    ]
 );
 
 export const storeCategoryProducts = mysqlTable(
-  "store_category_products",
-  {
-    id: int("id").autoincrement().primaryKey(),
-    name: varchar("name", { length: 191 }).notNull(),
-    key: varchar("key", { length: 191 }).notNull(),
-    dataJson: json("data_json").$type<JsonRecord>(),
-    isShow: int("is_show").notNull().default(1),
-    position: int("position").notNull().default(0),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
-  },
-  (table) => [
-    index("store_category_products_visible_idx").on(
-      table.isShow,
-      table.position,
-    ),
-    uniqueIndex("store_category_products_name_unique").on(table.name),
-    uniqueIndex("store_category_products_key_unique").on(table.key),
-  ],
+    'store_category_products',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        name: varchar('name', { length: 191 }).notNull(),
+        key: varchar('key', { length: 191 }).notNull(),
+        dataJson: json('data_json').$type<JsonRecord>(),
+        isShow: int('is_show').notNull().default(1),
+        position: int('position').notNull().default(0),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [
+        index('store_category_products_visible_idx').on(table.isShow, table.position),
+        uniqueIndex('store_category_products_name_unique').on(table.name),
+        uniqueIndex('store_category_products_key_unique').on(table.key),
+    ]
 );
 
 export const users = mysqlTable(
-  "users",
-  {
-    id: int("id").autoincrement().primaryKey(),
-    email: varchar("email", { length: 191 }),
-    username: varchar("username", { length: 100 }),
-    phone: varchar("phone", { length: 32 }),
-    fbid: varchar("fbid", { length: 191 }),
-    googleId: varchar("googleid", { length: 191 }),
-    password: varchar("password", { length: 255 }),
-    role: int("role").default(1).notNull(),
-    dataJson: json("data_json").$type<JsonRecord>(),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
-  },
-  (table) => [
-    uniqueIndex("users_email_unique").on(table.email),
-    uniqueIndex("users_username_unique").on(table.username),
-    uniqueIndex("users_phone_unique").on(table.phone),
-    uniqueIndex("users_fbid_unique").on(table.fbid),
-    uniqueIndex("users_googleid_unique").on(table.googleId),
-  ],
+    'users',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        email: varchar('email', { length: 191 }),
+        username: varchar('username', { length: 100 }),
+        phone: varchar('phone', { length: 32 }),
+        fbid: varchar('fbid', { length: 191 }),
+        googleId: varchar('googleid', { length: 191 }),
+        password: varchar('password', { length: 255 }),
+        role: int('role').default(1).notNull(),
+        dataJson: json('data_json').$type<JsonRecord>(),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [
+        uniqueIndex('users_email_unique').on(table.email),
+        uniqueIndex('users_username_unique').on(table.username),
+        uniqueIndex('users_phone_unique').on(table.phone),
+        uniqueIndex('users_fbid_unique').on(table.fbid),
+        uniqueIndex('users_googleid_unique').on(table.googleId),
+    ]
 );
 
 export const profiles = mysqlTable(
-  "profiles",
-  {
-    id: int("id").autoincrement().primaryKey(),
-    userId: int("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
-    name: varchar("name", { length: 150 }),
-    email: varchar("email", { length: 191 }),
-    phone: varchar("phone", { length: 32 }),
-    telegramUsername: varchar("telegram_username", { length: 64 }),
-    dataJson: json("data_json").$type<JsonRecord>(),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
-  },
-  (table) => [
-    index("profiles_user_idx").on(table.userId),
-    uniqueIndex("profiles_user_unique").on(table.userId),
-  ],
+    'profiles',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        userId: int('user_id')
+            .notNull()
+            .references(() => users.id, { onDelete: 'cascade' }),
+        name: varchar('name', { length: 150 }),
+        email: varchar('email', { length: 191 }),
+        phone: varchar('phone', { length: 32 }),
+        telegramUsername: varchar('telegram_username', { length: 64 }),
+        dataJson: json('data_json').$type<JsonRecord>(),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [
+        index('profiles_user_idx').on(table.userId),
+        uniqueIndex('profiles_user_unique').on(table.userId),
+    ]
 );
 
 export const settings = mysqlTable(
-  "settings",
-  {
-    id: int("id").autoincrement().primaryKey(),
-    key: varchar("key", { length: 191 }).notNull(),
-    dataJson: json("data_json").$type<JsonRecord>(),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
-  },
-  (table) => [
-    uniqueIndex("settings_key_unique").on(table.key),
-  ],
+    'settings',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        key: varchar('key', { length: 191 }).notNull(),
+        dataJson: json('data_json').$type<JsonRecord>(),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [uniqueIndex('settings_key_unique').on(table.key)]
 );
 
 export const settingMultiples = mysqlTable(
-  "setting_multiple",
-  {
-    id: int("id").autoincrement().primaryKey(),
-    name: varchar("name", { length: 191 }).notNull(),
-    key: varchar("key", { length: 191 }).notNull(),
-    dataJson: json("data_json").$type<JsonRecord>(),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
-  },
-  (table) => [
-    uniqueIndex("setting_multiple_name_key_unique").on(
-      table.name,
-      table.key,
-    ),
-  ],
+    'setting_multiple',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        name: varchar('name', { length: 191 }).notNull(),
+        key: varchar('key', { length: 191 }).notNull(),
+        dataJson: json('data_json').$type<JsonRecord>(),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [uniqueIndex('setting_multiple_name_key_unique').on(table.name, table.key)]
 );
 
 export const chromeProfiles = mysqlTable(
-  "chrome_profiles",
-  {
-    id: int("id").autoincrement().primaryKey(),
-    uuid: varchar("uuid", { length: 36 }).notNull(),
-    userId: int("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
-    customerId: int("customer_id")
-      .references(() => customers.id, { onDelete: "set null" }),
-    name: varchar("name", { length: 191 }).notNull(),
-    userAgent: text("user_agent"),
-    proxy: varchar("proxy", { length: 255 }),
-    cookies: json("cookies"),
-    fingerprint: json("fingerprint"),
-    status: int("status").default(0).notNull(),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
-  },
-  (table) => [
-    uniqueIndex("chrome_profiles_uuid_unique").on(table.uuid),
-    index("chrome_profiles_user_idx").on(table.userId),
-    index("chrome_profiles_customer_idx").on(table.customerId),
-  ],
+    'chrome_profiles',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        uuid: varchar('uuid', { length: 36 }).notNull(),
+        userId: int('user_id')
+            .notNull()
+            .references(() => users.id, { onDelete: 'cascade' }),
+        customerId: int('customer_id').references(() => customers.id, { onDelete: 'set null' }),
+        name: varchar('name', { length: 191 }).notNull(),
+        userAgent: text('user_agent'),
+        proxy: varchar('proxy', { length: 255 }),
+        cookies: json('cookies'),
+        fingerprint: json('fingerprint'),
+        status: int('status').default(0).notNull(),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [
+        uniqueIndex('chrome_profiles_uuid_unique').on(table.uuid),
+        index('chrome_profiles_user_idx').on(table.userId),
+        index('chrome_profiles_customer_idx').on(table.customerId),
+    ]
 );
 
 export const chromeHistories = mysqlTable(
-  "chrome_histories",
-  {
-    id: int("id").autoincrement().primaryKey(),
-    userId: int("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
-    customerId: int("customer_id")
-      .references(() => customers.id, { onDelete: "set null" }),
-    profileId: int("profile_id")
-      .notNull()
-      .references(() => chromeProfiles.id, { onDelete: "cascade" }),
-    url: varchar("url", { length: 2048 }).notNull(),
-    count: int("count").notNull().default(0),
-    dataJson: json("data_json").$type<JsonRecord>(),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
-  },
-  (table) => [
-    index("chrome_histories_user_idx").on(table.userId),
-    index("chrome_histories_customer_idx").on(table.customerId),
-    index("chrome_histories_profile_idx").on(table.profileId),
-  ],
+    'chrome_histories',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        userId: int('user_id')
+            .notNull()
+            .references(() => users.id, { onDelete: 'cascade' }),
+        customerId: int('customer_id').references(() => customers.id, { onDelete: 'set null' }),
+        profileId: int('profile_id')
+            .notNull()
+            .references(() => chromeProfiles.id, { onDelete: 'cascade' }),
+        url: varchar('url', { length: 2048 }).notNull(),
+        count: int('count').notNull().default(0),
+        dataJson: json('data_json').$type<JsonRecord>(),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [
+        index('chrome_histories_user_idx').on(table.userId),
+        index('chrome_histories_customer_idx').on(table.customerId),
+        index('chrome_histories_profile_idx').on(table.profileId),
+    ]
 );
 
 export const chromeVisitEvents = mysqlTable(
-  "chrome_visit_events",
-  {
-    id: int("id").autoincrement().primaryKey(),
-    historyId: int("history_id")
-      .notNull()
-      .references(() => chromeHistories.id, { onDelete: "cascade" }),
-    userId: int("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
-    customerId: int("customer_id")
-      .references(() => customers.id, { onDelete: "set null" }),
-    visitedAt: timestamp("visited_at").notNull(),
-    durationMs: int("duration_ms"),
-    dataJson: json("data_json").$type<JsonRecord>(),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-  },
-  (table) => [
-    index("chrome_visit_events_user_visited_idx").on(table.userId, table.visitedAt),
-    index("chrome_visit_events_history_idx").on(table.historyId),
-    index("chrome_visit_events_customer_idx").on(table.customerId),
-    index("chrome_visit_events_visited_at_idx").on(table.visitedAt),
-  ],
+    'chrome_visit_events',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        historyId: int('history_id')
+            .notNull()
+            .references(() => chromeHistories.id, { onDelete: 'cascade' }),
+        userId: int('user_id')
+            .notNull()
+            .references(() => users.id, { onDelete: 'cascade' }),
+        customerId: int('customer_id').references(() => customers.id, { onDelete: 'set null' }),
+        visitedAt: timestamp('visited_at').notNull(),
+        durationMs: int('duration_ms'),
+        dataJson: json('data_json').$type<JsonRecord>(),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+    },
+    (table) => [
+        index('chrome_visit_events_user_visited_idx').on(table.userId, table.visitedAt),
+        index('chrome_visit_events_history_idx').on(table.historyId),
+        index('chrome_visit_events_customer_idx').on(table.customerId),
+        index('chrome_visit_events_visited_at_idx').on(table.visitedAt),
+    ]
 );
 
 export const chromeHtmls = mysqlTable(
-  "chrome_htmls",
-  {
-    id: int("id").autoincrement().primaryKey(),
-    historyId: int("history_id")
-      .notNull()
-      .references(() => chromeHistories.id, { onDelete: "cascade" }),
-    html: longtext("html"),
-    dataJson: json("data_json").$type<JsonRecord>(),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-  },
-  (table) => [
-    index("chrome_htmls_history_idx").on(table.historyId),
-  ],
+    'chrome_htmls',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        historyId: int('history_id')
+            .notNull()
+            .references(() => chromeHistories.id, { onDelete: 'cascade' }),
+        html: longtext('html'),
+        dataJson: json('data_json').$type<JsonRecord>(),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+    },
+    (table) => [index('chrome_htmls_history_idx').on(table.historyId)]
 );
 
 export const chromeActions = mysqlTable(
-  "chrome_actions",
-  {
-    id: int("id").autoincrement().primaryKey(),
-    historyId: int("history_id")
-      .notNull()
-      .references(() => chromeHistories.id, { onDelete: "cascade" }),
-    type: int("type").notNull(),
-    dataJson: json("data_json").$type<JsonRecord>(),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-  },
-  (table) => [
-    index("chrome_actions_history_idx").on(table.historyId),
-  ],
+    'chrome_actions',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        historyId: int('history_id')
+            .notNull()
+            .references(() => chromeHistories.id, { onDelete: 'cascade' }),
+        type: int('type').notNull(),
+        dataJson: json('data_json').$type<JsonRecord>(),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+    },
+    (table) => [index('chrome_actions_history_idx').on(table.historyId)]
 );
 
 export const chromeWhatsapps = mysqlTable(
-  "chrome_whatsapps",
-  {
-    id: int("id").autoincrement().primaryKey(),
-    userId: int("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
-    phone: varchar("phone", { length: 32 }).notNull(),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
-  },
-  (table) => [
-    index("chrome_whatsapps_user_idx").on(table.userId),
-  ],
+    'chrome_whatsapps',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        userId: int('user_id')
+            .notNull()
+            .references(() => users.id, { onDelete: 'cascade' }),
+        phone: varchar('phone', { length: 32 }).notNull(),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [index('chrome_whatsapps_user_idx').on(table.userId)]
 );
 
 export const chromeWhatsappContacts = mysqlTable(
-  "chrome_whatsapp_contacts",
-  {
-    id: int("id").autoincrement().primaryKey(),
-    userId: int("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
-    whatsappId: int("whatsapp_id")
-      .notNull()
-      .references(() => chromeWhatsapps.id, { onDelete: "cascade" }),
-    name: varchar("name", { length: 191 }),
-    phone: varchar("phone", { length: 32 }),
-    waid: varchar("waid", { length: 191 }),
-    lid: varchar("lid", { length: 191 }),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
-  },
-  (table) => [
-    index("chrome_wa_contacts_user_idx").on(table.userId),
-    index("chrome_wa_contacts_whatsapp_idx").on(table.whatsappId),
-  ],
+    'chrome_whatsapp_contacts',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        userId: int('user_id')
+            .notNull()
+            .references(() => users.id, { onDelete: 'cascade' }),
+        whatsappId: int('whatsapp_id')
+            .notNull()
+            .references(() => chromeWhatsapps.id, { onDelete: 'cascade' }),
+        name: varchar('name', { length: 191 }),
+        phone: varchar('phone', { length: 32 }),
+        waid: varchar('waid', { length: 191 }),
+        lid: varchar('lid', { length: 191 }),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [
+        index('chrome_wa_contacts_user_idx').on(table.userId),
+        index('chrome_wa_contacts_whatsapp_idx').on(table.whatsappId),
+    ]
 );
 
 export const userRelations = relations(users, ({ one, many }) => ({
-  profile: one(profiles, {
-    fields: [users.id],
-    references: [profiles.userId],
-  }),
-  refreshTokens: many(refreshTokens),
+    profile: one(profiles, {
+        fields: [users.id],
+        references: [profiles.userId],
+    }),
+    refreshTokens: many(refreshTokens),
 }));
 
 export const profileRelations = relations(profiles, ({ one }) => ({
-  user: one(users, {
-    fields: [profiles.userId],
-    references: [users.id],
-  }),
+    user: one(users, {
+        fields: [profiles.userId],
+        references: [users.id],
+    }),
 }));
 
 export const customerRelations = relations(customers, ({ many }) => ({
-  profiles: many(customerProfiles),
+    profiles: many(customerProfiles),
 }));
 
-export const customerProfileRelations = relations(
-  customerProfiles,
-  ({ one }) => ({
+export const customerProfileRelations = relations(customerProfiles, ({ one }) => ({
     customer: one(customers, {
-      fields: [customerProfiles.customerId],
-      references: [customers.id],
+        fields: [customerProfiles.customerId],
+        references: [customers.id],
     }),
-  }),
-);
+}));
 
 export const refreshTokenRelations = relations(refreshTokens, ({ one }) => ({
-  user: one(users, {
-    fields: [refreshTokens.userId],
-    references: [users.id],
-  }),
+    user: one(users, {
+        fields: [refreshTokens.userId],
+        references: [users.id],
+    }),
 }));
 
 export const customerRefreshTokenRelations = relations(customerRefreshTokens, ({ one }) => ({
-  customer: one(customers, {
-    fields: [customerRefreshTokens.customerId],
-    references: [customers.id],
-  }),
+    customer: one(customers, {
+        fields: [customerRefreshTokens.customerId],
+        references: [customers.id],
+    }),
 }));
 
 // ─── Security: Rate Limiting ─────────────────────────────────────────────
 
 export const rateLimitEntries = mysqlTable(
-  "rate_limit_entries",
-  {
-    id: int("id").autoincrement().primaryKey(),
-    identifier: varchar("identifier", { length: 255 }).notNull(), // IP address or user identifier
-    count: int("count").notNull().default(0),
-    resetTime: timestamp("reset_time").notNull(),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
-  },
-  (table) => [
-    uniqueIndex("rate_limit_identifier_unique").on(table.identifier),
-    index("rate_limit_reset_time_idx").on(table.resetTime),
-  ],
+    'rate_limit_entries',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        identifier: varchar('identifier', { length: 255 }).notNull(), // IP address or user identifier
+        count: int('count').notNull().default(0),
+        resetTime: timestamp('reset_time').notNull(),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [
+        uniqueIndex('rate_limit_identifier_unique').on(table.identifier),
+        index('rate_limit_reset_time_idx').on(table.resetTime),
+    ]
 );
 
 // ─── Security: Account Lockout ────────────────────────────────────────────
 
 export const accountLockoutEntries = mysqlTable(
-  "account_lockout_entries",
-  {
-    id: int("id").autoincrement().primaryKey(),
-    identifier: varchar("identifier", { length: 255 }).notNull(), // email, phone, or username
-    attempts: int("attempts").notNull().default(0),
-    lockUntil: timestamp("lock_until"), // null if not locked
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
-  },
-  (table) => [
-    uniqueIndex("account_lockout_identifier_unique").on(table.identifier),
-    index("account_lockout_lock_until_idx").on(table.lockUntil),
-  ],
+    'account_lockout_entries',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        identifier: varchar('identifier', { length: 255 }).notNull(), // email, phone, or username
+        attempts: int('attempts').notNull().default(0),
+        lockUntil: timestamp('lock_until'), // null if not locked
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [
+        uniqueIndex('account_lockout_identifier_unique').on(table.identifier),
+        index('account_lockout_lock_until_idx').on(table.lockUntil),
+    ]
 );
 
 // ─── Audit Trail ─────────────────────────────────────────────────────────
 
 export const auditLogs = mysqlTable(
-  "audit_logs",
-  {
-    id: int("id").autoincrement().primaryKey(),
-    userId: int("user_id").references(() => users.id, { onDelete: "set null" }),
-    customerId: int("customer_id").references(() => customers.id, { onDelete: "set null" }),
-    action: varchar("action", { length: 50 }).notNull(), // CREATE, UPDATE, DELETE, RESTORE, etc.
-    entityType: varchar("entity_type", { length: 50 }).notNull(), // customer, user, subscription, etc.
-    entityId: int("entity_id"),
-    changes: json("changes").$type<JsonRecord>(), // before/after values
-    ipAddress: varchar("ip_address", { length: 45 }),
-    userAgent: text("user_agent"),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-  },
-  (table) => [
-    index("audit_logs_user_idx").on(table.userId),
-    index("audit_logs_customer_idx").on(table.customerId),
-    index("audit_logs_entity_idx").on(table.entityType, table.entityId),
-    index("audit_logs_action_idx").on(table.action),
-    index("audit_logs_created_at_idx").on(table.createdAt),
-  ],
+    'audit_logs',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        userId: int('user_id').references(() => users.id, { onDelete: 'set null' }),
+        customerId: int('customer_id').references(() => customers.id, { onDelete: 'set null' }),
+        action: varchar('action', { length: 50 }).notNull(), // CREATE, UPDATE, DELETE, RESTORE, etc.
+        entityType: varchar('entity_type', { length: 50 }).notNull(), // customer, user, subscription, etc.
+        entityId: int('entity_id'),
+        changes: json('changes').$type<JsonRecord>(), // before/after values
+        ipAddress: varchar('ip_address', { length: 45 }),
+        userAgent: text('user_agent'),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+    },
+    (table) => [
+        index('audit_logs_user_idx').on(table.userId),
+        index('audit_logs_customer_idx').on(table.customerId),
+        index('audit_logs_entity_idx').on(table.entityType, table.entityId),
+        index('audit_logs_action_idx').on(table.action),
+        index('audit_logs_created_at_idx').on(table.createdAt),
+    ]
 );
 
 export const chromeProfileRelations = relations(chromeProfiles, ({ one, many }) => ({
-  user: one(users, {
-    fields: [chromeProfiles.userId],
-    references: [users.id],
-  }),
-  customer: one(customers, {
-    fields: [chromeProfiles.customerId],
-    references: [customers.id],
-  }),
-  histories: many(chromeHistories),
+    user: one(users, {
+        fields: [chromeProfiles.userId],
+        references: [users.id],
+    }),
+    customer: one(customers, {
+        fields: [chromeProfiles.customerId],
+        references: [customers.id],
+    }),
+    histories: many(chromeHistories),
 }));
 
 export const chromeHistoryRelations = relations(chromeHistories, ({ one, many }) => ({
-  user: one(users, {
-    fields: [chromeHistories.userId],
-    references: [users.id],
-  }),
-  customer: one(customers, {
-    fields: [chromeHistories.customerId],
-    references: [customers.id],
-  }),
-  profile: one(chromeProfiles, {
-    fields: [chromeHistories.profileId],
-    references: [chromeProfiles.id],
-  }),
-  htmls: many(chromeHtmls),
-  actions: many(chromeActions),
+    user: one(users, {
+        fields: [chromeHistories.userId],
+        references: [users.id],
+    }),
+    customer: one(customers, {
+        fields: [chromeHistories.customerId],
+        references: [customers.id],
+    }),
+    profile: one(chromeProfiles, {
+        fields: [chromeHistories.profileId],
+        references: [chromeProfiles.id],
+    }),
+    htmls: many(chromeHtmls),
+    actions: many(chromeActions),
 }));
 
 export const chromeHtmlRelations = relations(chromeHtmls, ({ one }) => ({
-  history: one(chromeHistories, {
-    fields: [chromeHtmls.historyId],
-    references: [chromeHistories.id],
-  }),
+    history: one(chromeHistories, {
+        fields: [chromeHtmls.historyId],
+        references: [chromeHistories.id],
+    }),
 }));
 
 export const chromeActionRelations = relations(chromeActions, ({ one }) => ({
-  history: one(chromeHistories, {
-    fields: [chromeActions.historyId],
-    references: [chromeHistories.id],
-  }),
+    history: one(chromeHistories, {
+        fields: [chromeActions.historyId],
+        references: [chromeHistories.id],
+    }),
 }));
 
 export const chromeWhatsappRelations = relations(chromeWhatsapps, ({ one, many }) => ({
-  user: one(users, {
-    fields: [chromeWhatsapps.userId],
-    references: [users.id],
-  }),
-  contacts: many(chromeWhatsappContacts),
+    user: one(users, {
+        fields: [chromeWhatsapps.userId],
+        references: [users.id],
+    }),
+    contacts: many(chromeWhatsappContacts),
 }));
 
 export const chromeWhatsappContactRelations = relations(chromeWhatsappContacts, ({ one }) => ({
-  user: one(users, {
-    fields: [chromeWhatsappContacts.userId],
-    references: [users.id],
-  }),
-  whatsapp: one(chromeWhatsapps, {
-    fields: [chromeWhatsappContacts.whatsappId],
-    references: [chromeWhatsapps.id],
-  }),
+    user: one(users, {
+        fields: [chromeWhatsappContacts.userId],
+        references: [users.id],
+    }),
+    whatsapp: one(chromeWhatsapps, {
+        fields: [chromeWhatsappContacts.whatsappId],
+        references: [chromeWhatsapps.id],
+    }),
 }));
 
 // ─── Products & Subscriptions ────────────────────────────────────────────
 
 export const products = mysqlTable(
-  "products",
-  {
-    id: int("id").autoincrement().primaryKey(),
-    name: varchar("name", { length: 191 }).notNull(),
-    description: text("description"),
-    price: decimal("price", { precision: 12, scale: 2 }).default("0"),
-    dataJson: json("data_json").$type<JsonRecord>(),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
-  },
-  (table) => [
-    uniqueIndex("products_name_unique").on(table.name),
-  ],
+    'products',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        name: varchar('name', { length: 191 }).notNull(),
+        description: text('description'),
+        price: decimal('price', { precision: 12, scale: 2 }).default('0'),
+        dataJson: json('data_json').$type<JsonRecord>(),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [uniqueIndex('products_name_unique').on(table.name)]
 );
 
 export const subscriptions = mysqlTable(
-  "subscriptions",
-  {
-    id: int("id").autoincrement().primaryKey(),
-    customerId: int("customer_id")
-      .notNull()
-      .references(() => customers.id, { onDelete: "cascade" }),
-    productId: int("product_id")
-      .notNull()
-      .references(() => products.id, { onDelete: "cascade" }),
-    advertiserId: int("advertiser_id")
-      .references(() => users.id, { onDelete: "set null" }),
-    brand: varchar("brand", { length: 191 }),
-    platform: varchar("platform", { length: 191 }),
-    startDate: date("start_date"),
-    dueDate: date("due_date"),
-    status: int("status").default(1).notNull(),
-    onboardingDate: date("onboarding_date"),
-    onboardingStatus: int("onboarding_status").default(0).notNull(),
-    target: text("target"),
-    onboardingUpdatedAt: timestamp("onboarding_updated_at"),
-    note: text("note"),
-    dataJson: json("data_json").$type<JsonRecord>(),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
-  },
-  (table) => [
-    index("subscriptions_customer_idx").on(table.customerId),
-    index("subscriptions_product_idx").on(table.productId),
-    index("subscriptions_advertiser_idx").on(table.advertiserId),
-    index("subscriptions_status_idx").on(table.status),
-  ],
+    'subscriptions',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        customerId: int('customer_id')
+            .notNull()
+            .references(() => customers.id, { onDelete: 'cascade' }),
+        productId: int('product_id')
+            .notNull()
+            .references(() => products.id, { onDelete: 'cascade' }),
+        advertiserId: int('advertiser_id').references(() => users.id, { onDelete: 'set null' }),
+        brand: varchar('brand', { length: 191 }),
+        platform: varchar('platform', { length: 191 }),
+        startDate: date('start_date'),
+        dueDate: date('due_date'),
+        status: int('status').default(1).notNull(),
+        onboardingDate: date('onboarding_date'),
+        onboardingStatus: int('onboarding_status').default(0).notNull(),
+        target: text('target'),
+        onboardingUpdatedAt: timestamp('onboarding_updated_at'),
+        note: text('note'),
+        cancelReason: text('cancel_reason'),
+        dataJson: json('data_json').$type<JsonRecord>(),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [
+        index('subscriptions_customer_idx').on(table.customerId),
+        index('subscriptions_product_idx').on(table.productId),
+        index('subscriptions_advertiser_idx').on(table.advertiserId),
+        index('subscriptions_status_idx').on(table.status),
+    ]
 );
 
 export const productRelations = relations(products, ({ many }) => ({
-  subscriptions: many(subscriptions),
+    subscriptions: many(subscriptions),
 }));
 
 export const subscriptionRelations = relations(subscriptions, ({ one }) => ({
-  customer: one(customers, {
-    fields: [subscriptions.customerId],
-    references: [customers.id],
-  }),
-  product: one(products, {
-    fields: [subscriptions.productId],
-    references: [products.id],
-  }),
-  advertiser: one(users, {
-    fields: [subscriptions.advertiserId],
-    references: [users.id],
-  }),
+    customer: one(customers, {
+        fields: [subscriptions.customerId],
+        references: [customers.id],
+    }),
+    product: one(products, {
+        fields: [subscriptions.productId],
+        references: [products.id],
+    }),
+    advertiser: one(users, {
+        fields: [subscriptions.advertiserId],
+        references: [users.id],
+    }),
 }));
 
 // ─── Ticket Issues ───────────────────────────────────────────────────
 
 export const ticketIssues = mysqlTable(
-  "ticket_issues",
-  {
-    id: int("id").autoincrement().primaryKey(),
-    title: varchar("title", { length: 255 }).notNull(),
-    customerId: int("customer_id")
-      .references(() => customers.id, { onDelete: "set null" }),
-    subscriptionId: int("subscription_id")
-      .references(() => subscriptions.id, { onDelete: "set null" }),
-    assignedTo: int("assigned_to")
-      .references(() => users.id, { onDelete: "set null" }),
-    description: text("description"),
-    status: int("status").default(0).notNull(),
-    pendingOn: int("pending_on").default(0).notNull(),
-    holdSince: timestamp("hold_since"),
-    dataJson: json("data_json").$type<JsonRecord>(),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
-  },
-  (table) => [
-    index("ticket_issues_customer_idx").on(table.customerId),
-    index("ticket_issues_subscription_idx").on(table.subscriptionId),
-    index("ticket_issues_assigned_idx").on(table.assignedTo),
-    index("ticket_issues_status_idx").on(table.status),
-  ],
+    'ticket_issues',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        title: varchar('title', { length: 255 }).notNull(),
+        customerId: int('customer_id').references(() => customers.id, { onDelete: 'set null' }),
+        subscriptionId: int('subscription_id').references(() => subscriptions.id, {
+            onDelete: 'set null',
+        }),
+        assignedTo: int('assigned_to').references(() => users.id, { onDelete: 'set null' }),
+        description: text('description'),
+        status: int('status').default(0).notNull(),
+        pendingOn: int('pending_on').default(0).notNull(),
+        holdSince: timestamp('hold_since'),
+        dataJson: json('data_json').$type<JsonRecord>(),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [
+        index('ticket_issues_customer_idx').on(table.customerId),
+        index('ticket_issues_subscription_idx').on(table.subscriptionId),
+        index('ticket_issues_assigned_idx').on(table.assignedTo),
+        index('ticket_issues_status_idx').on(table.status),
+    ]
 );
 
 // ─── Meetings ────────────────────────────────────────────────────────
 
 export const meetings = mysqlTable(
-  "meetings",
-  {
-    id: int("id").autoincrement().primaryKey(),
-    type: int("type").default(0).notNull(),
-    title: varchar("title", { length: 255 }).notNull(),
-    date: timestamp("date"),
-    customerId: int("customer_id")
-      .references(() => customers.id, { onDelete: "set null" }),
-    subscriptionId: int("subscription_id")
-      .references(() => subscriptions.id, { onDelete: "set null" }),
-    assignedTo: int("assigned_to")
-      .references(() => users.id, { onDelete: "set null" }),
-    members: text("members"),
-    description: text("description"),
-    summary: json("summary").$type<JsonRecord>(),
-    actionItems: json("action_items").$type<JsonRecord>(),
-    checklist: json("checklist").$type<JsonRecord>(),
-    newTarget: json("new_target").$type<JsonRecord>(),
-    newKpi: json("new_kpi").$type<JsonRecord>(),
-    dataJson: json("data_json").$type<JsonRecord>(),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
-  },
-  (table) => [
-    index("meetings_customer_idx").on(table.customerId),
-    index("meetings_subscription_idx").on(table.subscriptionId),
-    index("meetings_assigned_idx").on(table.assignedTo),
-    index("meetings_date_idx").on(table.date),
-  ],
+    'meetings',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        type: int('type').default(0).notNull(),
+        title: varchar('title', { length: 255 }).notNull(),
+        date: timestamp('date'),
+        customerId: int('customer_id').references(() => customers.id, { onDelete: 'set null' }),
+        subscriptionId: int('subscription_id').references(() => subscriptions.id, {
+            onDelete: 'set null',
+        }),
+        assignedTo: int('assigned_to').references(() => users.id, { onDelete: 'set null' }),
+        members: text('members'),
+        description: text('description'),
+        summary: json('summary').$type<JsonRecord>(),
+        actionItems: json('action_items').$type<JsonRecord>(),
+        checklist: json('checklist').$type<JsonRecord>(),
+        newTarget: json('new_target').$type<JsonRecord>(),
+        newKpi: json('new_kpi').$type<JsonRecord>(),
+        dataJson: json('data_json').$type<JsonRecord>(),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [
+        index('meetings_customer_idx').on(table.customerId),
+        index('meetings_subscription_idx').on(table.subscriptionId),
+        index('meetings_assigned_idx').on(table.assignedTo),
+        index('meetings_date_idx').on(table.date),
+    ]
 );
 
 export const meetingMembers = mysqlTable(
-  "meeting_members",
-  {
-    id: int("id").autoincrement().primaryKey(),
-    meetingId: int("meeting_id")
-      .notNull()
-      .references(() => meetings.id, { onDelete: "cascade" }),
-    userId: int("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
-  },
-  (table) => [
-    index("meeting_members_meeting_idx").on(table.meetingId),
-    index("meeting_members_user_idx").on(table.userId),
-  ],
+    'meeting_members',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        meetingId: int('meeting_id')
+            .notNull()
+            .references(() => meetings.id, { onDelete: 'cascade' }),
+        userId: int('user_id')
+            .notNull()
+            .references(() => users.id, { onDelete: 'cascade' }),
+    },
+    (table) => [
+        index('meeting_members_meeting_idx').on(table.meetingId),
+        index('meeting_members_user_idx').on(table.userId),
+    ]
 );
 
 // ─── Scorecards ──────────────────────────────────────────────────────
 
 export const scorecards = mysqlTable(
-  "scorecards",
-  {
-    id: int("id").autoincrement().primaryKey(),
-    customerId: int("customer_id")
-      .references(() => customers.id, { onDelete: "set null" }),
-    subscriptionId: int("subscription_id")
-      .references(() => subscriptions.id, { onDelete: "set null" }),
-    title: varchar("title", { length: 255 }).notNull(),
-    description: text("description"),
-    assignedTo: int("assigned_to")
-      .references(() => users.id, { onDelete: "set null" }),
-    pic: int("pic").default(0).notNull(), // 0 = internal (advertiser), 1 = client
-    category: int("category").default(0).notNull(), // 0 = goal / target, 1 = indikator, 2 = aktifitas yang bisa di ukur
-    targetValue: decimal("target_value", { precision: 14, scale: 2 }),
-    targetType: int("target_type").default(0).notNull(), // 0 = minimum (actual lebih besar = lebih baik), 1 = maximum (actual lebih kecil = lebih baik)
-    unitValue: int("unit_value").default(0).notNull(),
-    unitCustom: varchar("unit_custom", { length: 100 }),
-    frequency: int("frequency").default(1).notNull(),
-    showOnScorecard: int("show_on_scorecard").default(1).notNull(),
-    greenThreshold: int("green_threshold").default(100).notNull(),
-    yellowThreshold: int("yellow_threshold").default(80).notNull(),
-    status: int("status").default(1).notNull(),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
-  },
-  (table) => [
-    index("scorecards_customer_idx").on(table.customerId),
-    index("scorecards_subscription_idx").on(table.subscriptionId),
-    index("scorecards_assigned_idx").on(table.assignedTo),
-    index("scorecards_status_idx").on(table.status),
-  ],
+    'scorecards',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        customerId: int('customer_id').references(() => customers.id, { onDelete: 'set null' }),
+        subscriptionId: int('subscription_id').references(() => subscriptions.id, {
+            onDelete: 'set null',
+        }),
+        title: varchar('title', { length: 255 }).notNull(),
+        description: text('description'),
+        assignedTo: int('assigned_to').references(() => users.id, { onDelete: 'set null' }),
+        pic: int('pic').default(0).notNull(), // 0 = internal (advertiser), 1 = client
+        category: int('category').default(0).notNull(), // 0 = goal / target, 1 = indikator, 2 = aktifitas yang bisa di ukur
+        targetValue: decimal('target_value', { precision: 14, scale: 2 }),
+        targetType: int('target_type').default(0).notNull(), // 0 = minimum (actual lebih besar = lebih baik), 1 = maximum (actual lebih kecil = lebih baik)
+        unitValue: int('unit_value').default(0).notNull(),
+        unitCustom: varchar('unit_custom', { length: 100 }),
+        frequency: int('frequency').default(1).notNull(),
+        showOnScorecard: int('show_on_scorecard').default(1).notNull(),
+        greenThreshold: int('green_threshold').default(100).notNull(),
+        yellowThreshold: int('yellow_threshold').default(80).notNull(),
+        status: int('status').default(1).notNull(),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [
+        index('scorecards_customer_idx').on(table.customerId),
+        index('scorecards_subscription_idx').on(table.subscriptionId),
+        index('scorecards_assigned_idx').on(table.assignedTo),
+        index('scorecards_status_idx').on(table.status),
+    ]
 );
 
 export const scorecardData = mysqlTable(
-  "scorecard_data",
-  {
-    id: int("id").autoincrement().primaryKey(),
-    scorecardId: int("scorecard_id")
-      .notNull()
-      .references(() => scorecards.id, { onDelete: "cascade" }),
-    year: int("year").notNull(),
-    month: int("month"),
-    week: int("week"),
-    day: int("day"),
-    actualValue: decimal("actual_value", { precision: 14, scale: 2 }),
-    targetValue: decimal("target_value", { precision: 14, scale: 2 }),
-    status: int("status").default(1).notNull(),
-    threshold: int("threshold").default(0).notNull(),
-    trend: int("trend").default(0).notNull(),
-    enteredBy: int("entered_by").default(0).notNull(),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
-  },
-  (table) => [
-    index("scorecard_data_scorecard_idx").on(table.scorecardId),
-    index("scorecard_data_period_idx").on(table.year, table.month, table.week),
-    index("scorecard_data_status_idx").on(table.status),
-  ],
+    'scorecard_data',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        scorecardId: int('scorecard_id')
+            .notNull()
+            .references(() => scorecards.id, { onDelete: 'cascade' }),
+        year: int('year').notNull(),
+        month: int('month'),
+        week: int('week'),
+        day: int('day'),
+        actualValue: decimal('actual_value', { precision: 14, scale: 2 }),
+        targetValue: decimal('target_value', { precision: 14, scale: 2 }),
+        status: int('status').default(1).notNull(),
+        threshold: int('threshold').default(0).notNull(),
+        trend: int('trend').default(0).notNull(),
+        enteredBy: int('entered_by').default(0).notNull(),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [
+        index('scorecard_data_scorecard_idx').on(table.scorecardId),
+        index('scorecard_data_period_idx').on(table.year, table.month, table.week),
+        index('scorecard_data_status_idx').on(table.status),
+    ]
 );
 
 // ─── Todos ───────────────────────────────────────────────────────────
 
 export const todos = mysqlTable(
-  "todos",
-  {
-    id: int("id").autoincrement().primaryKey(),
-    type: int("type").default(3).notNull(), // 0 = scorecard 1 = meeting, 2 = ticket issue, 3 = other
-    title: varchar("title", { length: 255 }).notNull(),
-    customerId: int("customer_id")
-      .references(() => customers.id, { onDelete: "set null" }),
-    subscriptionId: int("subscription_id")
-      .references(() => subscriptions.id, { onDelete: "set null" }),
-    assignedTo: int("assigned_to")
-      .references(() => users.id, { onDelete: "set null" }),
-    pic: int("pic").default(0).notNull(),
-    scorecardId: int("scorecard_id")
-      .references(() => scorecards.id, { onDelete: "set null" }),
-    scorecardDataId: int("scorecard_data_id")
-      .references(() => scorecardData.id, { onDelete: "set null" }),
-    meetingId: int("meeting_id")
-      .references(() => meetings.id, { onDelete: "set null" }),
-    ticketIssueId: int("ticket_issue_id")
-      .references(() => ticketIssues.id, { onDelete: "set null" }),
-    description: text("description"),
-    status: int("status").default(0).notNull(),
-    subTask: json("sub_task").$type<JsonRecord>(),
-    checklist: json("checklist").$type<JsonRecord>(),
-    startDate: date("start_date"),
-    dueDate: date("due_date"),
-    priority: int("priority").default(1).notNull(),
-    tags: text("tags"),
-    platform: varchar("platform", { length: 191 }),
-    isRecurring: int("is_recurring").default(0).notNull(),
-    dataJson: json("data_json").$type<JsonRecord>(),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
-  },
-  (table) => [
-    index("todos_customer_idx").on(table.customerId),
-    index("todos_subscription_idx").on(table.subscriptionId),
-    index("todos_assigned_idx").on(table.assignedTo),
-    index("todos_status_idx").on(table.status),
-    index("todos_priority_idx").on(table.priority),
-    index("todos_type_idx").on(table.type),
-    index("todos_scorecard_idx").on(table.scorecardId),
-    index("todos_meeting_idx").on(table.meetingId),
-    index("todos_ticket_idx").on(table.ticketIssueId),
-  ],
+    'todos',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        type: int('type').default(3).notNull(), // 0 = scorecard 1 = meeting, 2 = ticket issue, 3 = other
+        title: varchar('title', { length: 255 }).notNull(),
+        customerId: int('customer_id').references(() => customers.id, { onDelete: 'set null' }),
+        subscriptionId: int('subscription_id').references(() => subscriptions.id, {
+            onDelete: 'set null',
+        }),
+        assignedTo: int('assigned_to').references(() => users.id, { onDelete: 'set null' }),
+        pic: int('pic').default(0).notNull(),
+        scorecardId: int('scorecard_id').references(() => scorecards.id, { onDelete: 'set null' }),
+        scorecardDataId: int('scorecard_data_id').references(() => scorecardData.id, {
+            onDelete: 'set null',
+        }),
+        meetingId: int('meeting_id').references(() => meetings.id, { onDelete: 'set null' }),
+        ticketIssueId: int('ticket_issue_id').references(() => ticketIssues.id, {
+            onDelete: 'set null',
+        }),
+        description: text('description'),
+        status: int('status').default(0).notNull(),
+        subTask: json('sub_task').$type<JsonRecord>(),
+        checklist: json('checklist').$type<JsonRecord>(),
+        startDate: date('start_date'),
+        dueDate: date('due_date'),
+        priority: int('priority').default(1).notNull(),
+        tags: text('tags'),
+        platform: varchar('platform', { length: 191 }),
+        isRecurring: int('is_recurring').default(0).notNull(),
+        dataJson: json('data_json').$type<JsonRecord>(),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [
+        index('todos_customer_idx').on(table.customerId),
+        index('todos_subscription_idx').on(table.subscriptionId),
+        index('todos_assigned_idx').on(table.assignedTo),
+        index('todos_status_idx').on(table.status),
+        index('todos_priority_idx').on(table.priority),
+        index('todos_type_idx').on(table.type),
+        index('todos_scorecard_idx').on(table.scorecardId),
+        index('todos_meeting_idx').on(table.meetingId),
+        index('todos_ticket_idx').on(table.ticketIssueId),
+    ]
 );
 
 // ─── Repeat Task ─────────────────────────────────────────────────────
 
 export const repeatTasks = mysqlTable(
-  "repeat_tasks",
-  {
-    id: int("id").autoincrement().primaryKey(),
-    todoId: int("todo_id")
-      .notNull()
-      .references(() => todos.id, { onDelete: "cascade" }),
-    type: int("type").default(0).notNull(), // 0 = daily, 1 = weekly, 2 = monthly, 3 = yearly
-    status: int("status").default(0).notNull(), // 0 = active, 1 = inactive
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
-  },
-  (table) => [
-    index("repeat_task_todo_idx").on(table.todoId),
-  ],
+    'repeat_tasks',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        todoId: int('todo_id')
+            .notNull()
+            .references(() => todos.id, { onDelete: 'cascade' }),
+        type: int('type').default(0).notNull(), // 0 = daily, 1 = weekly, 2 = monthly, 3 = yearly
+        status: int('status').default(0).notNull(), // 0 = active, 1 = inactive
+        interval: int('interval').default(1).notNull(), // tiap N hari/minggu/bulan/tahun
+        byWeekday: int('by_weekday'), // weekly: 0=Min..6=Sab (null = ikut startDate)
+        byMonthDay: int('by_month_day'), // monthly/yearly: 1..31, atau -1 = hari terakhir bulan
+        byMonth: int('by_month'), // yearly: 1..12
+        excludeWeekdays: json('exclude_weekdays').$type<number[]>(), // daily: hari yang dilewati (0=Min..6=Sab)
+        startDate: date('start_date', { mode: 'string' }), // mulai berlaku
+        endDate: date('end_date', { mode: 'string' }), // berhenti (null = selamanya)
+        maxOccurrences: int('max_occurrences'), // alternatif stop (null = tak terbatas)
+        generatedCount: int('generated_count').default(0).notNull(),
+        lastRunDate: date('last_run_date', { mode: 'string' }), // occurrence terakhir yang dibuat
+        nextRunDate: date('next_run_date', { mode: 'string' }), // occurrence berikutnya (cursor cron)
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [
+        index('repeat_task_todo_idx').on(table.todoId),
+        index('repeat_task_next_run_idx').on(table.status, table.nextRunDate),
+    ]
 );
 
 // ─── Todo Repeat History ─────────────────────────────────────────────
 
 export const todoRepeatHistories = mysqlTable(
-  "todo_repeat_histories",
-  {
-    id: int("id").autoincrement().primaryKey(),
-    repeatTaskId: int("repeat_task_id")
-      .notNull()
-      .references(() => repeatTasks.id, { onDelete: "cascade" }),
-    type: int("type").default(3).notNull(),
-    title: varchar("title", { length: 255 }).notNull(),
-    customerId: int("customer_id")
-      .references(() => customers.id, { onDelete: "set null" }),
-    subscriptionId: int("subscription_id")
-      .references(() => subscriptions.id, { onDelete: "set null" }),
-    assignedTo: int("assigned_to")
-      .references(() => users.id, { onDelete: "set null" }),
-    pic: int("pic").default(0).notNull(),
-    scorecardId: int("scorecard_id")
-      .references(() => scorecards.id, { onDelete: "set null" }),
-    scorecardDataId: int("scorecard_data_id")
-      .references(() => scorecardData.id, { onDelete: "set null" }),
-    meetingId: int("meeting_id")
-      .references(() => meetings.id, { onDelete: "set null" }),
-    ticketIssueId: int("ticket_issue_id")
-      .references(() => ticketIssues.id, { onDelete: "set null" }),
-    description: text("description"),
-    status: int("status").default(0).notNull(),
-    subTask: json("sub_task").$type<JsonRecord>(),
-    checklist: json("checklist").$type<JsonRecord>(),
-    startDate: date("start_date"),
-    dueDate: date("due_date"),
-    priority: int("priority").default(1).notNull(),
-    tags: text("tags"),
-    platform: varchar("platform", { length: 191 }),
-    isRecurring: int("is_recurring").default(0).notNull(),
-    dataJson: json("data_json").$type<JsonRecord>(),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
-  },
-  (table) => [
-    index("todo_repeat_hist_repeat_idx").on(table.repeatTaskId),
-    index("todo_repeat_hist_customer_idx").on(table.customerId),
-    index("todo_repeat_hist_assigned_idx").on(table.assignedTo),
-    index("todo_repeat_hist_status_idx").on(table.status),
-  ],
+    'todo_repeat_histories',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        repeatTaskId: int('repeat_task_id')
+            .notNull()
+            .references(() => repeatTasks.id, { onDelete: 'cascade' }),
+        occurrenceDate: date('occurrence_date', { mode: 'string' }).notNull(), // tanggal occurrence ini (anchor idempotensi)
+        type: int('type').default(3).notNull(),
+        title: varchar('title', { length: 255 }).notNull(),
+        customerId: int('customer_id').references(() => customers.id, { onDelete: 'set null' }),
+        subscriptionId: int('subscription_id').references(() => subscriptions.id, {
+            onDelete: 'set null',
+        }),
+        assignedTo: int('assigned_to').references(() => users.id, { onDelete: 'set null' }),
+        pic: int('pic').default(0).notNull(),
+        scorecardId: int('scorecard_id').references(() => scorecards.id, { onDelete: 'set null' }),
+        scorecardDataId: int('scorecard_data_id').references(() => scorecardData.id, {
+            onDelete: 'set null',
+        }),
+        meetingId: int('meeting_id').references(() => meetings.id, { onDelete: 'set null' }),
+        ticketIssueId: int('ticket_issue_id').references(() => ticketIssues.id, {
+            onDelete: 'set null',
+        }),
+        description: text('description'),
+        status: int('status').default(0).notNull(),
+        subTask: json('sub_task').$type<JsonRecord>(),
+        checklist: json('checklist').$type<JsonRecord>(),
+        startDate: date('start_date', { mode: 'string' }),
+        dueDate: date('due_date', { mode: 'string' }),
+        priority: int('priority').default(1).notNull(),
+        tags: text('tags'),
+        platform: varchar('platform', { length: 191 }),
+        isRecurring: int('is_recurring').default(0).notNull(),
+        dataJson: json('data_json').$type<JsonRecord>(),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [
+        index('todo_repeat_hist_repeat_idx').on(table.repeatTaskId),
+        uniqueIndex('todo_repeat_hist_repeat_occurrence_unique').on(
+            table.repeatTaskId,
+            table.occurrenceDate
+        ),
+        index('todo_repeat_hist_customer_idx').on(table.customerId),
+        index('todo_repeat_hist_assigned_idx').on(table.assignedTo),
+        index('todo_repeat_hist_status_idx').on(table.status),
+    ]
 );
 
 // ─── Relations for new tables ────────────────────────────────────────
 
 export const ticketIssueRelations = relations(ticketIssues, ({ one }) => ({
-  customer: one(customers, { fields: [ticketIssues.customerId], references: [customers.id] }),
-  subscription: one(subscriptions, { fields: [ticketIssues.subscriptionId], references: [subscriptions.id] }),
-  assignee: one(users, { fields: [ticketIssues.assignedTo], references: [users.id] }),
+    customer: one(customers, { fields: [ticketIssues.customerId], references: [customers.id] }),
+    subscription: one(subscriptions, {
+        fields: [ticketIssues.subscriptionId],
+        references: [subscriptions.id],
+    }),
+    assignee: one(users, { fields: [ticketIssues.assignedTo], references: [users.id] }),
 }));
 
 export const meetingRelations = relations(meetings, ({ one, many }) => ({
-  customer: one(customers, { fields: [meetings.customerId], references: [customers.id] }),
-  subscription: one(subscriptions, { fields: [meetings.subscriptionId], references: [subscriptions.id] }),
-  assignee: one(users, { fields: [meetings.assignedTo], references: [users.id] }),
-  meetingMembers: many(meetingMembers),
+    customer: one(customers, { fields: [meetings.customerId], references: [customers.id] }),
+    subscription: one(subscriptions, {
+        fields: [meetings.subscriptionId],
+        references: [subscriptions.id],
+    }),
+    assignee: one(users, { fields: [meetings.assignedTo], references: [users.id] }),
+    meetingMembers: many(meetingMembers),
 }));
 
 export const meetingMemberRelations = relations(meetingMembers, ({ one }) => ({
-  meeting: one(meetings, { fields: [meetingMembers.meetingId], references: [meetings.id] }),
-  user: one(users, { fields: [meetingMembers.userId], references: [users.id] }),
+    meeting: one(meetings, { fields: [meetingMembers.meetingId], references: [meetings.id] }),
+    user: one(users, { fields: [meetingMembers.userId], references: [users.id] }),
 }));
 
 export const scorecardRelations = relations(scorecards, ({ one, many }) => ({
-  customer: one(customers, { fields: [scorecards.customerId], references: [customers.id] }),
-  subscription: one(subscriptions, { fields: [scorecards.subscriptionId], references: [subscriptions.id] }),
-  assignee: one(users, { fields: [scorecards.assignedTo], references: [users.id] }),
-  data: many(scorecardData),
+    customer: one(customers, { fields: [scorecards.customerId], references: [customers.id] }),
+    subscription: one(subscriptions, {
+        fields: [scorecards.subscriptionId],
+        references: [subscriptions.id],
+    }),
+    assignee: one(users, { fields: [scorecards.assignedTo], references: [users.id] }),
+    data: many(scorecardData),
 }));
 
 export const scorecardDataRelations = relations(scorecardData, ({ one }) => ({
-  scorecard: one(scorecards, { fields: [scorecardData.scorecardId], references: [scorecards.id] }),
+    scorecard: one(scorecards, {
+        fields: [scorecardData.scorecardId],
+        references: [scorecards.id],
+    }),
 }));
 
 export const todoRelations = relations(todos, ({ one, many }) => ({
-  customer: one(customers, { fields: [todos.customerId], references: [customers.id] }),
-  subscription: one(subscriptions, { fields: [todos.subscriptionId], references: [subscriptions.id] }),
-  assignee: one(users, { fields: [todos.assignedTo], references: [users.id] }),
-  scorecard: one(scorecards, { fields: [todos.scorecardId], references: [scorecards.id] }),
-  meeting: one(meetings, { fields: [todos.meetingId], references: [meetings.id] }),
-  ticketIssue: one(ticketIssues, { fields: [todos.ticketIssueId], references: [ticketIssues.id] }),
-  repeats: many(repeatTasks),
+    customer: one(customers, { fields: [todos.customerId], references: [customers.id] }),
+    subscription: one(subscriptions, {
+        fields: [todos.subscriptionId],
+        references: [subscriptions.id],
+    }),
+    assignee: one(users, { fields: [todos.assignedTo], references: [users.id] }),
+    scorecard: one(scorecards, { fields: [todos.scorecardId], references: [scorecards.id] }),
+    meeting: one(meetings, { fields: [todos.meetingId], references: [meetings.id] }),
+    ticketIssue: one(ticketIssues, {
+        fields: [todos.ticketIssueId],
+        references: [ticketIssues.id],
+    }),
+    repeats: many(repeatTasks),
 }));
 
 export const repeatTaskRelations = relations(repeatTasks, ({ one, many }) => ({
-  todo: one(todos, { fields: [repeatTasks.todoId], references: [todos.id] }),
-  histories: many(todoRepeatHistories),
+    todo: one(todos, { fields: [repeatTasks.todoId], references: [todos.id] }),
+    histories: many(todoRepeatHistories),
 }));
 
 export const todoRepeatHistoryRelations = relations(todoRepeatHistories, ({ one }) => ({
-  repeatTask: one(repeatTasks, { fields: [todoRepeatHistories.repeatTaskId], references: [repeatTasks.id] }),
-  customer: one(customers, { fields: [todoRepeatHistories.customerId], references: [customers.id] }),
-  subscription: one(subscriptions, { fields: [todoRepeatHistories.subscriptionId], references: [subscriptions.id] }),
-  assignee: one(users, { fields: [todoRepeatHistories.assignedTo], references: [users.id] }),
-  scorecard: one(scorecards, { fields: [todoRepeatHistories.scorecardId], references: [scorecards.id] }),
-  meeting: one(meetings, { fields: [todoRepeatHistories.meetingId], references: [meetings.id] }),
-  ticketIssue: one(ticketIssues, { fields: [todoRepeatHistories.ticketIssueId], references: [ticketIssues.id] }),
+    repeatTask: one(repeatTasks, {
+        fields: [todoRepeatHistories.repeatTaskId],
+        references: [repeatTasks.id],
+    }),
+    customer: one(customers, {
+        fields: [todoRepeatHistories.customerId],
+        references: [customers.id],
+    }),
+    subscription: one(subscriptions, {
+        fields: [todoRepeatHistories.subscriptionId],
+        references: [subscriptions.id],
+    }),
+    assignee: one(users, { fields: [todoRepeatHistories.assignedTo], references: [users.id] }),
+    scorecard: one(scorecards, {
+        fields: [todoRepeatHistories.scorecardId],
+        references: [scorecards.id],
+    }),
+    meeting: one(meetings, { fields: [todoRepeatHistories.meetingId], references: [meetings.id] }),
+    ticketIssue: one(ticketIssues, {
+        fields: [todoRepeatHistories.ticketIssueId],
+        references: [ticketIssues.id],
+    }),
 }));
 
 // fb
 
 export const fbAct = mysqlTable(
-  "fb_act",
-  {
-    id: int("id").autoincrement().primaryKey(),
-    customerId: int("customer_id")
-      .notNull()
-      .references(() => customers.id, { onDelete: "cascade" }),
-    subscriptionId: int("subscription_id")
-      .notNull()
-      .references(() => subscriptions.id, { onDelete: "cascade" }),
-    tokenId: int("token_id")
-      .references(() => fbToken.id, { onDelete: "set null" }),
-    actId: varchar("act_id", { length: 191 }).notNull(),
-    actName: varchar("act_name", { length: 255 }),
-    name: varchar("name", { length: 255 }),
-    dataJson: json("data_json").$type<JsonRecord>(),
-    thresholdWarningOverride: decimal("threshold_warning_override", { precision: 20, scale: 2 }),
-    thresholdCriticalOverride: decimal("threshold_critical_override", { precision: 20, scale: 2 }),
-    postpaidThresholdOverride: decimal("postpaid_threshold_override", { precision: 20, scale: 2 }),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
-  },
-  (table) => [
-    index("fb_act_customer_idx").on(table.customerId),
-    index("fb_act_subscription_idx").on(table.subscriptionId),
-    index("fb_act_act_id_idx").on(table.actId),
-  ],
+    'fb_act',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        customerId: int('customer_id')
+            .notNull()
+            .references(() => customers.id, { onDelete: 'cascade' }),
+        subscriptionId: int('subscription_id')
+            .notNull()
+            .references(() => subscriptions.id, { onDelete: 'cascade' }),
+        tokenId: int('token_id').references(() => fbToken.id, { onDelete: 'set null' }),
+        actId: varchar('act_id', { length: 191 }).notNull(),
+        actName: varchar('act_name', { length: 255 }),
+        name: varchar('name', { length: 255 }),
+        dataJson: json('data_json').$type<JsonRecord>(),
+        thresholdWarningOverride: decimal('threshold_warning_override', {
+            precision: 20,
+            scale: 2,
+        }),
+        thresholdCriticalOverride: decimal('threshold_critical_override', {
+            precision: 20,
+            scale: 2,
+        }),
+        postpaidThresholdOverride: decimal('postpaid_threshold_override', {
+            precision: 20,
+            scale: 2,
+        }),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [
+        index('fb_act_customer_idx').on(table.customerId),
+        index('fb_act_subscription_idx').on(table.subscriptionId),
+        index('fb_act_act_id_idx').on(table.actId),
+    ]
 );
 
 export const fbToken = mysqlTable(
-  "fb_token",
-  {
-    id: int("id").autoincrement().primaryKey(),
-    userId: int("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
-    token: text("token").notNull(),
-    status: tinyint("status").notNull().default(1),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
-  },
-  (table) => [
-    index("fb_token_user_idx").on(table.userId),
-    index("fb_token_status_idx").on(table.status),
-  ],
+    'fb_token',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        userId: int('user_id')
+            .notNull()
+            .references(() => users.id, { onDelete: 'cascade' }),
+        token: text('token').notNull(),
+        status: tinyint('status').notNull().default(1),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [
+        index('fb_token_user_idx').on(table.userId),
+        index('fb_token_status_idx').on(table.status),
+    ]
 );
 
 export const fbActRelations = relations(fbAct, ({ one }) => ({
-  customer: one(customers, { fields: [fbAct.customerId], references: [customers.id] }),
-  subscription: one(subscriptions, { fields: [fbAct.subscriptionId], references: [subscriptions.id] }),
-  token: one(fbToken, { fields: [fbAct.tokenId], references: [fbToken.id] }),
+    customer: one(customers, { fields: [fbAct.customerId], references: [customers.id] }),
+    subscription: one(subscriptions, {
+        fields: [fbAct.subscriptionId],
+        references: [subscriptions.id],
+    }),
+    token: one(fbToken, { fields: [fbAct.tokenId], references: [fbToken.id] }),
 }));
 
 export const fbTokenRelations = relations(fbToken, ({ one }) => ({
-  user: one(users, { fields: [fbToken.userId], references: [users.id] }),
+    user: one(users, { fields: [fbToken.userId], references: [users.id] }),
 }));
 
 export const fbActDailyData = mysqlTable(
-  "fb_act_daily_data",
-  {
-    id: int("id").autoincrement().primaryKey(),
-    fbActId: int("fb_act_id").references(() => fbAct.id, { onDelete: "set null" }),
-    actId: varchar("act_id", { length: 64 }).notNull(),
-    date: date("date").notNull(),
-    balance: decimal("balance", { precision: 20, scale: 2 }),
-    amountSpent: decimal("amount_spent", { precision: 20, scale: 2 }),
-    spendCap: decimal("spend_cap", { precision: 20, scale: 2 }),
-    effectiveBalance: decimal("effective_balance", { precision: 20, scale: 2 }),
-    balanceType: varchar("balance_type", { length: 32 }),
-    spendingLimit: decimal("spending_limit", { precision: 20, scale: 2 }),
-    outstandingBalance: decimal("outstanding_balance", { precision: 20, scale: 2 }),
-    // 0 = ok, 1 = warning, 2 = critical
-    statusLevel: tinyint("status_level").notNull().default(0),
-    warningMessage: text("warning_message"),
-    spend: decimal("spend", { precision: 20, scale: 2 }),
-    impressions: int("impressions"),
-    reach: int("reach"),
-    frequency: decimal("frequency", { precision: 10, scale: 4 }),
-    linkClicks: int("link_clicks"),
-    ctr: decimal("ctr", { precision: 10, scale: 4 }),
-    cpm: decimal("cpm", { precision: 20, scale: 2 }),
-    cpc: decimal("cpc", { precision: 20, scale: 2 }),
-    dataJson: json("data_json").$type<JsonRecord>(),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
-  },
-  (table) => [
-    uniqueIndex("fb_act_daily_data_act_date_unique").on(table.actId, table.date),
-    index("fb_act_daily_data_act_idx").on(table.actId),
-    index("fb_act_daily_data_date_idx").on(table.date),
-  ],
+    'fb_act_daily_data',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        fbActId: int('fb_act_id').references(() => fbAct.id, { onDelete: 'set null' }),
+        actId: varchar('act_id', { length: 64 }).notNull(),
+        date: date('date').notNull(),
+        balance: decimal('balance', { precision: 20, scale: 2 }),
+        amountSpent: decimal('amount_spent', { precision: 20, scale: 2 }),
+        spendCap: decimal('spend_cap', { precision: 20, scale: 2 }),
+        effectiveBalance: decimal('effective_balance', { precision: 20, scale: 2 }),
+        balanceType: varchar('balance_type', { length: 32 }),
+        spendingLimit: decimal('spending_limit', { precision: 20, scale: 2 }),
+        outstandingBalance: decimal('outstanding_balance', { precision: 20, scale: 2 }),
+        // 0 = ok, 1 = warning, 2 = critical
+        statusLevel: tinyint('status_level').notNull().default(0),
+        warningMessage: text('warning_message'),
+        spend: decimal('spend', { precision: 20, scale: 2 }),
+        impressions: int('impressions'),
+        reach: int('reach'),
+        frequency: decimal('frequency', { precision: 10, scale: 4 }),
+        linkClicks: int('link_clicks'),
+        ctr: decimal('ctr', { precision: 10, scale: 4 }),
+        cpm: decimal('cpm', { precision: 20, scale: 2 }),
+        cpc: decimal('cpc', { precision: 20, scale: 2 }),
+        dataJson: json('data_json').$type<JsonRecord>(),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [
+        uniqueIndex('fb_act_daily_data_act_date_unique').on(table.actId, table.date),
+        index('fb_act_daily_data_act_idx').on(table.actId),
+        index('fb_act_daily_data_date_idx').on(table.date),
+    ]
 );
 
 export const fbActResultConfig = mysqlTable(
-  "fb_act_result_config",
-  {
-    id: int("id").autoincrement().primaryKey(),
-    fbActId: int("fb_act_id").references(() => fbAct.id, { onDelete: "set null" }),
-    actId: varchar("act_id", { length: 64 }).notNull(),
-    actionType: varchar("action_type", { length: 128 }).notNull(),
-    // lead | purchase | message | profile_visit
-    resultType: varchar("result_type", { length: 32 }).notNull(),
-    label: varchar("label", { length: 128 }).notNull(),
-    sortOrder: int("sort_order").notNull().default(0),
-    // 0 = false, 1 = true (instagram_profile_visit — dihitung dari link_click campaign Traffic)
-    isFallback: tinyint("is_fallback").notNull().default(0),
-    dataJson: json("data_json").$type<JsonRecord>(),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
-  },
-  (table) => [
-    uniqueIndex("fb_act_result_config_act_action_unique").on(table.actId, table.actionType),
-    index("fb_act_result_config_act_idx").on(table.actId),
-  ],
+    'fb_act_result_config',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        fbActId: int('fb_act_id').references(() => fbAct.id, { onDelete: 'set null' }),
+        actId: varchar('act_id', { length: 64 }).notNull(),
+        actionType: varchar('action_type', { length: 128 }).notNull(),
+        // lead | purchase | message | profile_visit
+        resultType: varchar('result_type', { length: 32 }).notNull(),
+        label: varchar('label', { length: 128 }).notNull(),
+        sortOrder: int('sort_order').notNull().default(0),
+        // 0 = false, 1 = true (instagram_profile_visit — dihitung dari link_click campaign Traffic)
+        isFallback: tinyint('is_fallback').notNull().default(0),
+        dataJson: json('data_json').$type<JsonRecord>(),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [
+        uniqueIndex('fb_act_result_config_act_action_unique').on(table.actId, table.actionType),
+        index('fb_act_result_config_act_idx').on(table.actId),
+    ]
 );
 
 export const fbActCampaignDailyInsights = mysqlTable(
-  "fb_act_campaign_daily_insights",
-  {
-    id: int("id").autoincrement().primaryKey(),
-    fbActId: int("fb_act_id").references(() => fbAct.id, { onDelete: "set null" }),
-    actId: varchar("act_id", { length: 64 }).notNull(),
-    date: date("date").notNull(),
-    campaignId: varchar("campaign_id", { length: 64 }).notNull(),
-    campaignName: varchar("campaign_name", { length: 255 }),
-    spend: decimal("spend", { precision: 20, scale: 2 }),
-    linkClicks: int("link_clicks"),
-    // 0 = false, 1 = true
-    isTrafficCampaign: tinyint("is_traffic_campaign").notNull().default(0),
-    resolvedPrimaryActionType: varchar("resolved_primary_action_type", { length: 128 }),
-    dataJson: json("data_json").$type<JsonRecord>(),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
-  },
-  (table) => [
-    uniqueIndex("fb_act_campaign_daily_act_date_camp_unique").on(table.actId, table.date, table.campaignId),
-    index("fb_act_campaign_daily_act_idx").on(table.actId),
-    index("fb_act_campaign_daily_date_idx").on(table.date),
-  ],
+    'fb_act_campaign_daily_insights',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        fbActId: int('fb_act_id').references(() => fbAct.id, { onDelete: 'set null' }),
+        actId: varchar('act_id', { length: 64 }).notNull(),
+        date: date('date').notNull(),
+        campaignId: varchar('campaign_id', { length: 64 }).notNull(),
+        campaignName: varchar('campaign_name', { length: 255 }),
+        spend: decimal('spend', { precision: 20, scale: 2 }),
+        linkClicks: int('link_clicks'),
+        // 0 = false, 1 = true
+        isTrafficCampaign: tinyint('is_traffic_campaign').notNull().default(0),
+        resolvedPrimaryActionType: varchar('resolved_primary_action_type', { length: 128 }),
+        dataJson: json('data_json').$type<JsonRecord>(),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [
+        uniqueIndex('fb_act_campaign_daily_act_date_camp_unique').on(
+            table.actId,
+            table.date,
+            table.campaignId
+        ),
+        index('fb_act_campaign_daily_act_idx').on(table.actId),
+        index('fb_act_campaign_daily_date_idx').on(table.date),
+    ]
 );
 
 export const fbActResultBreakdownDaily = mysqlTable(
-  "fb_act_result_breakdown_daily",
-  {
-    id: int("id").autoincrement().primaryKey(),
-    fbActId: int("fb_act_id").references(() => fbAct.id, { onDelete: "set null" }),
-    actId: varchar("act_id", { length: 64 }).notNull(),
-    date: date("date").notNull(),
-    label: varchar("label", { length: 128 }).notNull(),
-    // 0 = primary, 1 = traffic, 2 = fallback
-    resultType: tinyint("result_type").notNull().default(0),
-    results: int("results").notNull().default(0),
-    spent: decimal("spent", { precision: 20, scale: 2 }),
-    totalPurchase: int("total_purchase"),
-    purchaseValue: decimal("purchase_value", { precision: 20, scale: 2 }),
-    costPerPurchase: decimal("cost_per_purchase", { precision: 20, scale: 2 }),
-    roas: decimal("roas", { precision: 10, scale: 4 }),
-    dataJson: json("data_json").$type<JsonRecord>(),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
-  },
-  (table) => [
-    uniqueIndex("fb_act_breakdown_act_date_label_unique").on(table.actId, table.date, table.label),
-    index("fb_act_breakdown_act_idx").on(table.actId),
-    index("fb_act_breakdown_date_idx").on(table.date),
-  ],
+    'fb_act_result_breakdown_daily',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        fbActId: int('fb_act_id').references(() => fbAct.id, { onDelete: 'set null' }),
+        actId: varchar('act_id', { length: 64 }).notNull(),
+        date: date('date').notNull(),
+        label: varchar('label', { length: 128 }).notNull(),
+        // 0 = primary, 1 = traffic, 2 = fallback
+        resultType: tinyint('result_type').notNull().default(0),
+        results: int('results').notNull().default(0),
+        spent: decimal('spent', { precision: 20, scale: 2 }),
+        totalPurchase: int('total_purchase'),
+        purchaseValue: decimal('purchase_value', { precision: 20, scale: 2 }),
+        costPerPurchase: decimal('cost_per_purchase', { precision: 20, scale: 2 }),
+        roas: decimal('roas', { precision: 10, scale: 4 }),
+        dataJson: json('data_json').$type<JsonRecord>(),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [
+        uniqueIndex('fb_act_breakdown_act_date_label_unique').on(
+            table.actId,
+            table.date,
+            table.label
+        ),
+        index('fb_act_breakdown_act_idx').on(table.actId),
+        index('fb_act_breakdown_date_idx').on(table.date),
+    ]
 );
 
 export const fbActNotificationsLog = mysqlTable(
-  "fb_act_notifications_log",
-  {
-    id: int("id").autoincrement().primaryKey(),
-    fbActId: int("fb_act_id").references(() => fbAct.id, { onDelete: "set null" }),
-    actId: varchar("act_id", { length: 64 }).notNull(),
-    date: date("date", { mode: "string" }).notNull(),
-    // main | extra (extra = grup Telegram tambahan per akun)
-    type: varchar("type", { length: 64 }).notNull(),
-    dataJson: json("data_json").$type<JsonRecord>(),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-  },
-  (table) => [
-    index("fb_act_notif_log_act_idx").on(table.actId),
-    index("fb_act_notif_log_date_idx").on(table.date),
-    index("fb_act_notif_log_type_idx").on(table.type),
-  ],
+    'fb_act_notifications_log',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        fbActId: int('fb_act_id').references(() => fbAct.id, { onDelete: 'set null' }),
+        actId: varchar('act_id', { length: 64 }).notNull(),
+        date: date('date', { mode: 'string' }).notNull(),
+        // main | extra (extra = grup Telegram tambahan per akun)
+        type: varchar('type', { length: 64 }).notNull(),
+        dataJson: json('data_json').$type<JsonRecord>(),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+    },
+    (table) => [
+        index('fb_act_notif_log_act_idx').on(table.actId),
+        index('fb_act_notif_log_date_idx').on(table.date),
+        index('fb_act_notif_log_type_idx').on(table.type),
+    ]
 );
 
 export const fbActReportRuns = mysqlTable(
-  "fb_act_report_runs",
-  {
-    id: int("id").autoincrement().primaryKey(),
-    date: date("date").notNull(),
-    startedAt: timestamp("started_at"),
-    finishedAt: timestamp("finished_at"),
-    accountsTotal: int("accounts_total").notNull().default(0),
-    accountsSuccess: int("accounts_success").notNull().default(0),
-    accountsFailed: int("accounts_failed").notNull().default(0),
-    dataJson: json("data_json").$type<JsonRecord>(),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-  },
-  (table) => [
-    uniqueIndex("fb_act_report_runs_date_unique").on(table.date),
-    index("fb_act_report_runs_date_idx").on(table.date),
-  ],
+    'fb_act_report_runs',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        date: date('date').notNull(),
+        startedAt: timestamp('started_at'),
+        finishedAt: timestamp('finished_at'),
+        accountsTotal: int('accounts_total').notNull().default(0),
+        accountsSuccess: int('accounts_success').notNull().default(0),
+        accountsFailed: int('accounts_failed').notNull().default(0),
+        dataJson: json('data_json').$type<JsonRecord>(),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+    },
+    (table) => [
+        uniqueIndex('fb_act_report_runs_date_unique').on(table.date),
+        index('fb_act_report_runs_date_idx').on(table.date),
+    ]
 );
 
 // ─── Notification System ─────────────────────────────────────────────
 
-export const notificationSettingsGlobal = mysqlTable(
-  "notification_settings_global",
-  {
-    userId: int("user_id").primaryKey().references(() => users.id, { onDelete: "cascade" }),
-    telegramUsername: varchar("telegram_username", { length: 64 }),
-    extraTelegramUsername: varchar("extra_telegram_username", { length: 64 }),
-    telegramStatus: tinyint("telegram_status").notNull().default(0), // 0=unknown, 1=verified, 2=failed
-    telegramVerifiedAt: timestamp("telegram_verified_at"),
-    quietHoursStart: tinyint("quiet_hours_start").notNull().default(22),
-    quietHoursEnd: tinyint("quiet_hours_end").notNull().default(6),
-    dailyReportTime: tinyint("daily_report_time").notNull().default(5),
-    language: varchar("language", { length: 8 }).notNull().default("id"),
-    pausedUntil: timestamp("paused_until"),
-    pausedReason: varchar("paused_reason", { length: 255 }),
-    dataJson: json("data_json").$type<JsonRecord>(),
-    updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
-  },
-);
+export const notificationSettingsGlobal = mysqlTable('notification_settings_global', {
+    userId: int('user_id')
+        .primaryKey()
+        .references(() => users.id, { onDelete: 'cascade' }),
+    telegramUsername: varchar('telegram_username', { length: 64 }),
+    extraTelegramUsername: varchar('extra_telegram_username', { length: 64 }),
+    telegramStatus: tinyint('telegram_status').notNull().default(0), // 0=unknown, 1=verified, 2=failed
+    telegramVerifiedAt: timestamp('telegram_verified_at'),
+    quietHoursStart: tinyint('quiet_hours_start').notNull().default(22),
+    quietHoursEnd: tinyint('quiet_hours_end').notNull().default(6),
+    dailyReportTime: tinyint('daily_report_time').notNull().default(5),
+    language: varchar('language', { length: 8 }).notNull().default('id'),
+    pausedUntil: timestamp('paused_until'),
+    pausedReason: varchar('paused_reason', { length: 255 }),
+    dataJson: json('data_json').$type<JsonRecord>(),
+    updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+});
 
 export const notificationPreferences = mysqlTable(
-  "notification_preferences",
-  {
-    id: int("id").autoincrement().primaryKey(),
-    userId: int("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-    fbActId: int("fb_act_id").references(() => fbAct.id, { onDelete: "cascade" }),
-    notifCode: varchar("notif_code", { length: 64 }).notNull(),
-    enabled: tinyint("enabled").notNull().default(1),
-    channel: varchar("channel", { length: 32 }).notNull().default("telegram"),
-    dataJson: json("data_json").$type<JsonRecord>(),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
-  },
-  (table) => [
-    uniqueIndex("notif_pref_user_act_code_unique").on(table.userId, table.fbActId, table.notifCode, table.channel),
-    index("notif_pref_user_idx").on(table.userId),
-    index("notif_pref_act_idx").on(table.fbActId),
-  ],
+    'notification_preferences',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        userId: int('user_id')
+            .notNull()
+            .references(() => users.id, { onDelete: 'cascade' }),
+        fbActId: int('fb_act_id').references(() => fbAct.id, { onDelete: 'cascade' }),
+        notifCode: varchar('notif_code', { length: 64 }).notNull(),
+        enabled: tinyint('enabled').notNull().default(1),
+        channel: varchar('channel', { length: 32 }).notNull().default('telegram'),
+        dataJson: json('data_json').$type<JsonRecord>(),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [
+        uniqueIndex('notif_pref_user_act_code_unique').on(
+            table.userId,
+            table.fbActId,
+            table.notifCode,
+            table.channel
+        ),
+        index('notif_pref_user_idx').on(table.userId),
+        index('notif_pref_act_idx').on(table.fbActId),
+    ]
 );
 
 export const notificationLog = mysqlTable(
-  "notification_log",
-  {
-    id: bigint("id", { mode: "number", unsigned: true }).autoincrement().primaryKey(),
-    userId: int("user_id").references(() => users.id, { onDelete: "set null" }),
-    fbActId: int("fb_act_id").references(() => fbAct.id, { onDelete: "set null" }),
-    notifCode: varchar("notif_code", { length: 64 }).notNull(),
-    mode: varchar("mode", { length: 1 }).notNull(), // A | B | C
-    dedupeKey: varchar("dedupe_key", { length: 191 }).notNull(),
-    recipient: varchar("recipient", { length: 128 }).notNull(),
-    title: varchar("title", { length: 255 }),
-    preview: varchar("preview", { length: 500 }),
-    body: text("body"),
-    status: mysqlEnum("status", ["sent", "failed", "skipped"]).notNull(),
-    reason: varchar("reason", { length: 255 }),
-    readAt: timestamp("read_at"),
-    dataJson: json("data_json").$type<JsonRecord>(),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-  },
-  (table) => [
-    uniqueIndex("notif_log_dedupe_unique").on(table.dedupeKey, table.recipient, table.notifCode),
-    index("notif_log_user_date_idx").on(table.userId, table.createdAt),
-    index("notif_log_act_code_idx").on(table.fbActId, table.notifCode),
-    index("notif_log_unread_idx").on(table.userId, table.readAt),
-  ],
+    'notification_log',
+    {
+        id: bigint('id', { mode: 'number', unsigned: true }).autoincrement().primaryKey(),
+        userId: int('user_id').references(() => users.id, { onDelete: 'set null' }),
+        fbActId: int('fb_act_id').references(() => fbAct.id, { onDelete: 'set null' }),
+        notifCode: varchar('notif_code', { length: 64 }).notNull(),
+        mode: varchar('mode', { length: 1 }).notNull(), // A | B | C
+        dedupeKey: varchar('dedupe_key', { length: 191 }).notNull(),
+        recipient: varchar('recipient', { length: 128 }).notNull(),
+        title: varchar('title', { length: 255 }),
+        preview: varchar('preview', { length: 500 }),
+        body: text('body'),
+        status: mysqlEnum('status', ['sent', 'failed', 'skipped']).notNull(),
+        reason: varchar('reason', { length: 255 }),
+        readAt: timestamp('read_at'),
+        dataJson: json('data_json').$type<JsonRecord>(),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+    },
+    (table) => [
+        uniqueIndex('notif_log_dedupe_unique').on(
+            table.dedupeKey,
+            table.recipient,
+            table.notifCode
+        ),
+        index('notif_log_user_date_idx').on(table.userId, table.createdAt),
+        index('notif_log_act_code_idx').on(table.fbActId, table.notifCode),
+        index('notif_log_unread_idx').on(table.userId, table.readAt),
+    ]
 );
 
 // ─── Onboarding Progress ─────────────────────────────────────────────
 
 export const userOnboardingProgress = mysqlTable(
-  "user_onboarding_progress",
-  {
-    id: int("id").autoincrement().primaryKey(),
-    userId: int("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-    flowKey: varchar("flow_key", { length: 64 }).notNull(),
-    stepKey: varchar("step_key", { length: 64 }).notNull(),
-    manual: tinyint("manual").notNull().default(0),
-    completedAt: timestamp("completed_at"),
-    dismissedAt: timestamp("dismissed_at"),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
-  },
-  (table) => [
-    uniqueIndex("uop_user_flow_step_unique").on(table.userId, table.flowKey, table.stepKey),
-    index("uop_user_idx").on(table.userId),
-    index("uop_flow_idx").on(table.flowKey),
-  ],
+    'user_onboarding_progress',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        userId: int('user_id')
+            .notNull()
+            .references(() => users.id, { onDelete: 'cascade' }),
+        flowKey: varchar('flow_key', { length: 64 }).notNull(),
+        stepKey: varchar('step_key', { length: 64 }).notNull(),
+        manual: tinyint('manual').notNull().default(0),
+        completedAt: timestamp('completed_at'),
+        dismissedAt: timestamp('dismissed_at'),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [
+        uniqueIndex('uop_user_flow_step_unique').on(table.userId, table.flowKey, table.stepKey),
+        index('uop_user_idx').on(table.userId),
+        index('uop_flow_idx').on(table.flowKey),
+    ]
 );
+
+// ─── Credential Vault ────────────────────────────────────────────────
+
+// type item
+export const CREDENTIAL_TYPE = {
+    APP_LOGIN: 0, // url + username + password
+    API_TOKEN: 1, // token / api_key / secret (+ endpoint)
+    OTHER: 2, // bebas (pakai extra fields)
+} as const;
+
+// visibilitas item
+export const CREDENTIAL_VISIBILITY = {
+    PRIVATE: 0, // hanya owner
+    TEAM: 1, // semua user login
+    RESTRICTED: 2, // sesuai credential_shares
+} as const;
+
+export const CREDENTIAL_PRINCIPAL = { USER: 0, ROLE: 1 } as const;
+export const CREDENTIAL_PERMISSION = { VIEW: 0, EDIT: 1 } as const;
+export const CREDENTIAL_ACTION = {
+    REVEAL: 0,
+    CREATE: 1,
+    UPDATE: 2,
+    DELETE: 3,
+    SHARE: 4,
+} as const;
+
+export const credentials = mysqlTable(
+    'credentials',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        ownerId: int('owner_id')
+            .notNull()
+            .references(() => users.id, { onDelete: 'cascade' }),
+        title: varchar('title', { length: 191 }).notNull(),
+        type: int('type').default(0).notNull(), // CREDENTIAL_TYPE
+        visibility: int('visibility').default(0).notNull(), // CREDENTIAL_VISIBILITY
+        category: varchar('category', { length: 100 }),
+        // field non-rahasia (plaintext, boleh dicari)
+        url: varchar('url', { length: 500 }),
+        username: varchar('username', { length: 191 }),
+        // payload rahasia terenkripsi AES-256-GCM (format: iv.tag.ciphertext base64)
+        secretEnc: text('secret_enc'),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [
+        index('credentials_owner_idx').on(table.ownerId),
+        index('credentials_visibility_idx').on(table.visibility),
+        index('credentials_type_idx').on(table.type),
+    ]
+);
+
+export const credentialShares = mysqlTable(
+    'credential_shares',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        credentialId: int('credential_id')
+            .notNull()
+            .references(() => credentials.id, { onDelete: 'cascade' }),
+        principalType: int('principal_type').notNull(), // CREDENTIAL_PRINCIPAL
+        principalId: int('principal_id').notNull(), // users.id ATAU role number (0–7)
+        permission: int('permission').default(0).notNull(), // CREDENTIAL_PERMISSION
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+    },
+    (table) => [
+        uniqueIndex('cred_share_unique').on(
+            table.credentialId,
+            table.principalType,
+            table.principalId
+        ),
+        index('cred_share_credential_idx').on(table.credentialId),
+    ]
+);
+
+export const credentialAccessLogs = mysqlTable(
+    'credential_access_logs',
+    {
+        id: bigint('id', { mode: 'number' }).autoincrement().primaryKey(),
+        credentialId: int('credential_id').notNull(), // tanpa FK agar log tetap ada walau item dihapus
+        userId: int('user_id').notNull(),
+        action: int('action').notNull(), // CREDENTIAL_ACTION
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+    },
+    (table) => [
+        index('cred_log_credential_idx').on(table.credentialId),
+        index('cred_log_user_idx').on(table.userId),
+    ]
+);
+
+export const credentialRelations = relations(credentials, ({ one, many }) => ({
+    owner: one(users, { fields: [credentials.ownerId], references: [users.id] }),
+    shares: many(credentialShares),
+}));
+
+export const credentialShareRelations = relations(credentialShares, ({ one }) => ({
+    credential: one(credentials, {
+        fields: [credentialShares.credentialId],
+        references: [credentials.id],
+    }),
+}));

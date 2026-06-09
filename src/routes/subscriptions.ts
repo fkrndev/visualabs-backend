@@ -38,6 +38,7 @@ const subscriptionPayload = z.object({
   onboardingStatus: z.coerce.number().int().min(0).max(3).optional(),
   target: z.string().optional(),
   note: z.string().optional(),
+  cancelReason: z.string().optional(),
 });
 
 const updateSubscriptionPayload = subscriptionPayload.partial();
@@ -173,6 +174,7 @@ router.post('/', zValidator('json', subscriptionPayload), async (c) => {
       target: payload.target ?? null,
       onboardingUpdatedAt: payload.onboardingStatus !== undefined ? new Date() : null,
       note: payload.note ?? null,
+      cancelReason: payload.cancelReason ?? null,
     });
 
     const insertId = Number(insertResult.insertId);
@@ -213,6 +215,7 @@ router.put('/:id', zValidator('json', updateSubscriptionPayload), async (c) => {
   }
   if (payload.target !== undefined) sets.target = payload.target ?? null;
   if (payload.note !== undefined) sets.note = payload.note ?? null;
+  if (payload.cancelReason !== undefined) sets.cancelReason = payload.cancelReason ?? null;
 
   if (!Object.keys(sets).length) {
     return c.json({ success: false, message: 'Tidak ada data yang diupdate' }, 400);

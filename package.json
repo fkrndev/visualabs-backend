@@ -46,7 +46,8 @@
     "test:scorecards:data-integrity": "vitest run tests/customer-scoreboard-management/integration/data-integrity/",
     "format": "prettier --write .",
     "lint": "prettier --check .",
-    "job:meta-ads": "bun run scripts/run-meta-ads-report.ts"
+    "job:meta-ads": "bun run scripts/run-meta-ads-report.ts",
+    "job:recurring-todos": "bun run scripts/run-recurring-todos.ts"
   },
   "dependencies": {
     "@aws-sdk/client-ses": "^3.705.0",
