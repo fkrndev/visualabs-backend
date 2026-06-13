@@ -210,6 +210,14 @@ export const chromeProfiles = mysqlTable(
         cookies: json('cookies'),
         fingerprint: json('fingerprint'),
         status: int('status').default(0).notNull(),
+        // --- Profile lock (device exclusivity) ---
+        // Sebuah chrome profile hanya boleh dibuka oleh satu device pada satu waktu.
+        // Lock dianggap aktif selama lockExpiresAt > NOW(); aplikasi mengirim
+        // heartbeat tiap 30 detik untuk memperpanjang lockExpiresAt.
+        lockedBy: int('locked_by').references(() => users.id, { onDelete: 'set null' }),
+        lockDeviceId: varchar('lock_device_id', { length: 255 }),
+        lockedAt: timestamp('locked_at'),
+        lockExpiresAt: timestamp('lock_expires_at'),
         createdAt: timestamp('created_at').defaultNow().notNull(),
         updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
     },
@@ -217,6 +225,8 @@ export const chromeProfiles = mysqlTable(
         uniqueIndex('chrome_profiles_uuid_unique').on(table.uuid),
         index('chrome_profiles_user_idx').on(table.userId),
         index('chrome_profiles_customer_idx').on(table.customerId),
+        index('chrome_profiles_locked_by_idx').on(table.lockedBy),
+        index('chrome_profiles_lock_expires_idx').on(table.lockExpiresAt),
     ]
 );
 
