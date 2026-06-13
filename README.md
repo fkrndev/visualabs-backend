@@ -27,3 +27,11 @@ bun run job:recurring-todos 2026-06-01   # acuan tanggal tertentu (catch-up)
 
 cd ~/web/vims.dots.my.id/private/v-auto-backend/
 /home/visualabs/web/vims.dots.my.id/private/v-auto-backend
+
+
+# deploy backend
+## pull
+cd /home/visualabs/web/vims.dots.my.id/private/v-auto-backend && git pull --ff-only
+
+## restart
+cd /home/visualabs/web/vims.dots.my.id/private/v-auto-backend && pm2 restart vims && pm2 save
