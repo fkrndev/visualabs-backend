@@ -24,3 +24,6 @@ bun scripts/apply-migration.ts drizzle/0030_add_exclude_weekdays.sql
 # 0 6 * * *  cd /path/v-auto-backend && bun run job:recurring-todos
 bun run job:recurring-todos          # manual / hari ini
 bun run job:recurring-todos 2026-06-01   # acuan tanggal tertentu (catch-up)
+
+cd ~/web/vims.dots.my.id/private/v-auto-backend/
+/home/visualabs/web/vims.dots.my.id/private/v-auto-backend
