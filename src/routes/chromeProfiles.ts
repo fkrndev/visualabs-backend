@@ -186,6 +186,14 @@ router.get('/', zValidator('query', paginationQuery), async (c) => {
   });
 });
 
+router.get('/by-uuid/:uuid', async (c) => {
+  const uuid = c.req.param('uuid');
+  const rows = await buildSelectQuery().where(eq(chromeProfiles.uuid, uuid)).limit(1);
+  const item = rows[0] ? formatRow(rows[0]) : null;
+  if (!item) return c.json({ success: false, message: 'Chrome profile tidak ditemukan' }, 404);
+  return c.json({ success: true, data: item });
+});
+
 router.get('/:id', async (c) => {
   const id = Number(c.req.param('id'));
   if (Number.isNaN(id)) return c.json({ success: false, message: 'ID tidak valid' }, 400);

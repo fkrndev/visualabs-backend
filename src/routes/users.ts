@@ -80,7 +80,7 @@ router.get('/', rateLimit({ windowMs: 60000, maxRequests: 100 }), requireAuth, r
   if (q) {
     const value = `%${q}%`;
     filters.push(
-      or(like(users.email, value), like(users.username, value), like(users.phone, value))
+      or(like(users.email, value), like(users.username, value), like(users.phone, value))!
     );
   }
   if (email) filters.push(like(users.email, `%${email}%`));
