@@ -49,6 +49,32 @@ const trackPayload = z.object({
 router.post('/track', zValidator('json', trackPayload), async (c) => {
   const { browserUuid, url, title, durationMs } = c.req.valid('json');
 
+  // Validate token dari extension (X-Extension-Token header)
+  const extensionToken = c.req.header('X-Extension-Token');
+  
+  if (!extensionToken) {
+    return c.json({ success: false, message: 'Unauthorized - no token' }, 401);
+  }
+
+  // Verify JWT token
+  let tokenValid = false;
+  try {
+    const parts = extensionToken.split('.');
+    if (parts.length === 3) {
+      const decoded = JSON.parse(atob(parts[1]));
+      // Simple expiry check
+      if (decoded.exp && decoded.exp * 1000 > Date.now()) {
+        tokenValid = true;
+      }
+    }
+  } catch {
+    tokenValid = false;
+  }
+
+  if (!tokenValid) {
+    return c.json({ success: false, message: 'Token expired or invalid' }, 401);
+  }
+
   // Cari chrome profile berdasarkan browser UUID
   const profileRows = await db
     .select()

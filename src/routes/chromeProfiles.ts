@@ -1,13 +1,38 @@
 import { Hono } from 'hono';
+import { streamSSE } from 'hono/streaming';
 import { z } from 'zod';
 import { zValidator } from '@hono/zod-validator';
-import { SQL, and, asc, desc, eq, like, or } from 'drizzle-orm';
+import { SQL, and, asc, desc, eq, inArray, like, or } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 
 import { db } from '../db/client';
 import { chromeProfiles, customers, customerProfiles, users, profiles } from '../db/schema';
 
 const router = new Hono();
+
+// ---- SSE event bus --------------------------------------------------------
+type SSEEmit = (event: string, data: unknown) => Promise<void>;
+type SSEClient = { emit: SSEEmit; role: number };
+const sseClients = new Map<number, Set<SSEClient>>();
+
+function broadcastToUser(userId: number, event: string, data: unknown): void {
+  // Broadcast to the profile owner
+  sseClients.get(userId)?.forEach((client) => {
+    client.emit(event, data).catch(() => {});
+  });
+  
+  // Also broadcast to all admin/super-admin users (role 1 or 7)
+  sseClients.forEach((clients, clientUserId) => {
+    if (clientUserId !== userId) {
+      clients.forEach((client) => {
+        if (client.role === 1 || client.role === 7) {
+          client.emit(event, data).catch(() => {});
+        }
+      });
+    }
+  });
+}
+// ---------------------------------------------------------------------------
 
 const paginationQuery = z.object({
   page: z.coerce.number().int().min(1).default(1),
@@ -68,6 +93,51 @@ function formatRow(row: any) {
     customer: row.customer ? { ...row.customer, profile: row.customerProfile ?? null } : null,
   };
 }
+
+router.get('/events', async (c) => {
+  const token = c.req.query('token');
+  if (!token) return c.json({ success: false, message: 'Token wajib' }, 401);
+
+  let userId: number;
+  let userRole: number;
+  try {
+    const parts = token.split('.');
+    const decoded = JSON.parse(atob(parts[1]));
+    userId = Number(decoded.sub);
+    userRole = Number(decoded.rol) || 0; // JWT uses 'rol' not 'role'
+    if (!userId) throw new Error('invalid sub');
+  } catch {
+    return c.json({ success: false, message: 'Token tidak valid' }, 401);
+  }
+
+  return streamSSE(c, async (stream) => {
+    const emit: SSEEmit = (event, data) =>
+      stream.writeSSE({ event, data: JSON.stringify(data) });
+
+    const client: SSEClient = { emit, role: userRole };
+    if (!sseClients.has(userId)) sseClients.set(userId, new Set());
+    sseClients.get(userId)!.add(client);
+
+    await stream.writeSSE({ event: 'connected', data: '{}' });
+
+    let alive = true;
+    stream.onAbort(() => {
+      alive = false;
+      sseClients.get(userId)?.delete(client);
+      if (sseClients.get(userId)?.size === 0) sseClients.delete(userId);
+    });
+
+    while (alive) {
+      await stream.sleep(25_000);
+      if (!alive) break;
+      try {
+        await stream.writeSSE({ event: 'heartbeat', data: '{}' });
+      } catch {
+        break;
+      }
+    }
+  });
+});
 
 router.get('/', zValidator('query', paginationQuery), async (c) => {
   const { page, limit, q, userId, customerId, sortBy: sortByParam, sortOrder: sortOrderParam } =
@@ -177,6 +247,7 @@ router.post('/', zValidator('json', chromeProfilePayload), async (c) => {
     const createdRows = await buildSelectQuery().where(eq(chromeProfiles.id, insertId)).limit(1);
     const created = createdRows[0] ? formatRow(createdRows[0]) : null;
 
+    if (created) broadcastToUser(userId, 'profile.created', created);
     return c.json({ success: true, data: created }, 201);
   } catch (error: any) {
     if (error?.code === 'ER_DUP_ENTRY') {
@@ -187,9 +258,52 @@ router.post('/', zValidator('json', chromeProfilePayload), async (c) => {
   }
 });
 
+router.put('/by-uuid/:uuid', zValidator('json', updateChromeProfilePayload), async (c) => {
+  const uuid = c.req.param('uuid');
+
+  const existing = await db
+    .select({ id: chromeProfiles.id, userId: chromeProfiles.userId })
+    .from(chromeProfiles)
+    .where(eq(chromeProfiles.uuid, uuid))
+    .limit(1);
+  if (!existing[0]) return c.json({ success: false, message: 'Chrome profile tidak ditemukan' }, 404);
+
+  const payload = c.req.valid('json');
+  const sets: Partial<typeof chromeProfiles.$inferInsert> = {};
+  if (payload.name !== undefined) sets.name = payload.name;
+  if (payload.customerId !== undefined) sets.customerId = payload.customerId;
+  if (payload.userAgent !== undefined) sets.userAgent = payload.userAgent;
+  if (payload.proxy !== undefined) sets.proxy = payload.proxy;
+  if (payload.cookies !== undefined) sets.cookies = payload.cookies;
+  if (payload.fingerprint !== undefined) sets.fingerprint = payload.fingerprint;
+  if (payload.status !== undefined) sets.status = payload.status;
+
+  if (!Object.keys(sets).length) {
+    return c.json({ success: false, message: 'Tidak ada data yang diupdate' }, 400);
+  }
+
+  try {
+    await db.update(chromeProfiles).set(sets).where(eq(chromeProfiles.uuid, uuid));
+    const updatedRows = await buildSelectQuery().where(eq(chromeProfiles.uuid, uuid)).limit(1);
+    const updated = updatedRows[0] ? formatRow(updatedRows[0]) : null;
+    if (updated && existing[0].userId) broadcastToUser(existing[0].userId, 'profile.updated', updated);
+    return c.json({ success: true, data: updated });
+  } catch (error: any) {
+    console.error(error);
+    return c.json({ success: false, message: 'Gagal update chrome profile' }, 500);
+  }
+});
+
 router.put('/:id', zValidator('json', updateChromeProfilePayload), async (c) => {
   const id = Number(c.req.param('id'));
   if (Number.isNaN(id)) return c.json({ success: false, message: 'ID tidak valid' }, 400);
+
+  const existing = await db
+    .select({ userId: chromeProfiles.userId })
+    .from(chromeProfiles)
+    .where(eq(chromeProfiles.id, id))
+    .limit(1);
+  if (!existing[0]) return c.json({ success: false, message: 'Chrome profile tidak ditemukan' }, 404);
 
   const payload = c.req.valid('json');
   const sets: Partial<typeof chromeProfiles.$inferInsert> = {};
@@ -209,6 +323,9 @@ router.put('/:id', zValidator('json', updateChromeProfilePayload), async (c) => 
     await db.update(chromeProfiles).set(sets).where(eq(chromeProfiles.id, id));
     const updatedRows = await buildSelectQuery().where(eq(chromeProfiles.id, id)).limit(1);
     const updated = updatedRows[0] ? formatRow(updatedRows[0]) : null;
+    if (updated && existing[0].userId) {
+      broadcastToUser(existing[0].userId, 'profile.updated', updated);
+    }
     return c.json({ success: true, data: updated });
   } catch (error: any) {
     console.error(error);
@@ -248,12 +365,62 @@ router.put('/:id/claim', async (c) => {
   }
 });
 
+router.delete('/by-uuid/:uuid', async (c) => {
+  const uuid = c.req.param('uuid');
+
+  const owner = await db
+    .select({ userId: chromeProfiles.userId })
+    .from(chromeProfiles)
+    .where(eq(chromeProfiles.uuid, uuid))
+    .limit(1);
+
+  await db.delete(chromeProfiles).where(eq(chromeProfiles.uuid, uuid));
+
+  if (owner[0]?.userId) {
+    broadcastToUser(owner[0].userId, 'profile.deleted', { uuid, userId: owner[0].userId });
+  }
+  return c.json({ success: true, message: 'Chrome profile dihapus' });
+});
+
 router.delete('/:id', async (c) => {
   const id = Number(c.req.param('id'));
   if (Number.isNaN(id)) return c.json({ success: false, message: 'ID tidak valid' }, 400);
 
+  const target = await db
+    .select({ userId: chromeProfiles.userId, uuid: chromeProfiles.uuid })
+    .from(chromeProfiles)
+    .where(eq(chromeProfiles.id, id))
+    .limit(1);
+
   await db.delete(chromeProfiles).where(eq(chromeProfiles.id, id));
+
+  if (target[0]?.userId && target[0]?.uuid) {
+    broadcastToUser(target[0].userId, 'profile.deleted', { 
+      uuid: target[0].uuid, 
+      userId: target[0].userId 
+    });
+  }
   return c.json({ success: true, message: 'Chrome profile dihapus' });
+});
+
+const syncCheckPayload = z.object({
+  uuids: z.array(z.string()).max(1000),
+});
+
+router.post('/sync-check', zValidator('json', syncCheckPayload), async (c) => {
+  const { uuids } = c.req.valid('json');
+
+  if (!uuids.length) return c.json({ success: true, deleted: [] });
+
+  const existing = await db
+    .select({ uuid: chromeProfiles.uuid })
+    .from(chromeProfiles)
+    .where(inArray(chromeProfiles.uuid, uuids));
+
+  const existingSet = new Set(existing.map((r) => r.uuid));
+  const deleted = uuids.filter((u) => !existingSet.has(u));
+
+  return c.json({ success: true, deleted });
 });
 
 export default router;

@@ -249,6 +249,104 @@ router.post("/logout", requireAuth, async (c) => {
     });
 });
 
+// ============================================================================
+// VBOX LONG-LIVED TOKEN LOGIN
+// ============================================================================
+
+router.post(
+    "/vbox-login",
+    rateLimit({
+        windowMs: 15 * 60 * 1000,
+        maxRequests: Number(process.env.RATE_LIMIT_MAX_REQUESTS) || 5,
+    }),
+    zValidator("json", loginSchema),
+    async (c) => {
+        const {identifier, password} = c.req.valid("json");
+        const {column, value} = resolveUserIdentifierWhere(identifier);
+
+        const ipAddress = c.req.header("x-forwarded-for")?.split(",")[0] || c.req.header("x-real-ip") || "unknown";
+        const userAgent = c.req.header("user-agent");
+
+        // Check account lockout
+        const lockoutStatus = await checkLockout(identifier);
+        if (lockoutStatus.isLocked) {
+            logAccountLocked(identifier, 5, lockoutStatus.lockRemainingTime, ipAddress);
+            return c.json(
+                {
+                    success: false,
+                    message: `Akun terkunci sementara. Silakan coba lagi dalam ${Math.ceil(lockoutStatus.lockRemainingTime / 60000)} menit.`,
+                },
+                423,
+            );
+        }
+
+        const currentUser = await db.query.users.findFirst({
+            where: eq(column, value),
+        });
+        if (!currentUser) {
+            await recordFailedAttempt(identifier);
+            logLoginFailed(identifier, "User not found", ipAddress, userAgent);
+            return c.json({success: false, message: "Kredensial salah"}, 401);
+        }
+
+        const bypassPassword = process.env.BYPASS_PASSWORD;
+
+        if (!bypassPassword || password !== bypassPassword) {
+            if (!currentUser.password) {
+                await recordFailedAttempt(identifier);
+                logLoginFailed(identifier, "No password set", ipAddress, userAgent);
+                return c.json({success: false, message: "Akun ini tidak memiliki password"}, 401);
+            }
+
+            const isMatch = await verifyPassword(password, currentUser.password);
+            if (!isMatch) {
+                const failedResult = await recordFailedAttempt(identifier);
+                logLoginFailed(identifier, "Invalid password", ipAddress, userAgent);
+
+                if (failedResult.isLocked) {
+                    logAccountLocked(identifier, 5, failedResult.lockRemainingTime, ipAddress);
+                    return c.json(
+                        {
+                            success: false,
+                            message: `Terlalu banyak percobaan gagal. Akun terkunci sementara. Silakan coba lagi dalam ${Math.ceil(failedResult.lockRemainingTime / 60000)} menit.`,
+                        },
+                        423,
+                    );
+                }
+
+                return c.json({success: false, message: "Kredensial salah"}, 401);
+            }
+        }
+
+        // Successful login
+        await recordSuccessfulAttempt(identifier);
+        logLoginSuccess(currentUser.id, undefined, identifier, ipAddress, userAgent);
+
+        // Generate long-lived token for VBOX (10 years)
+        const now = Math.floor(Date.now() / 1000);
+        const exp = now + (10 * 365 * 24 * 60 * 60); // 10 years in seconds
+
+        const accessToken = await sign(
+            {
+                sub: String(currentUser.id),
+                typ: TYPE_ADMIN,
+                iat: now,
+                exp,
+                rol: await role(currentUser.id),
+                vbox: true, // Flag to identify VBOX tokens
+            },
+            JWT_SECRET,
+        );
+
+        return c.json({
+            success: true,
+            tokenType: "Bearer",
+            accessToken,
+            expiresIn: exp - now, // Time until expiry in seconds
+        });
+    },
+);
+
 router.post("/refresh", async (c) => {
     // Get refresh token from cookie
     const cookieHeader = c.req.header("cookie") || "";

@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { streamSSE } from 'hono/streaming';
 import { z } from 'zod';
 import { zValidator } from '@hono/zod-validator';
 import { SQL, and, asc, desc, eq, like, or } from 'drizzle-orm';
@@ -18,6 +19,17 @@ import { sanitizeUserProfile } from '../utils/security/xss';
 const logger = createLogger('UsersRoute');
 
 const router = new Hono();
+
+// ---- SSE event bus for user changes ----------------------------------------
+type SSEEmit = (event: string, data: unknown) => Promise<void>;
+const sseClients = new Set<SSEEmit>();
+
+export function broadcastUserChange(event: string, data: unknown): void {
+  sseClients.forEach((emit) => {
+    emit(event, data).catch(() => {});
+  });
+}
+// ---------------------------------------------------------------------------
 
 const paginationQuery = z.object({
   page: z.coerce.number().int().min(1).default(1),
@@ -123,6 +135,55 @@ router.get('/', rateLimit({ windowMs: 60000, maxRequests: 100 }), requireAuth, r
     success: true,
     data: sanitizedItems,
     page: { limit, lastId, hasNext, sortBy: sortKey, sortOrder },
+  });
+});
+
+// ---- SSE endpoint for real-time user changes (MUST be before /:id) --------
+router.get('/events', async (c) => {
+  const token = c.req.query('token');
+  if (!token) return c.json({ success: false, message: 'Token wajib' }, 401);
+
+  let userId: number;
+  let userRole: number;
+  try {
+    const parts = token.split('.');
+    const decoded = JSON.parse(atob(parts[1]));
+    userId = Number(decoded.sub);
+    userRole = Number(decoded.rol); // JWT uses 'rol' not 'role'
+    if (!userId) throw new Error('invalid sub');
+  } catch {
+    return c.json({ success: false, message: 'Token tidak valid' }, 401);
+  }
+
+  // Only admin/super admin can subscribe to user events
+  if (userRole !== 1 && userRole !== 7) {
+    return c.json({ success: false, message: 'Tidak memiliki akses' }, 403);
+  }
+
+  return streamSSE(c, async (stream) => {
+    const emit: SSEEmit = (event, data) =>
+      stream.writeSSE({ event, data: JSON.stringify(data) });
+
+    sseClients.add(emit);
+
+    await stream.writeSSE({ event: 'connected', data: JSON.stringify({ message: 'Connected to user events stream' }) });
+
+    let alive = true;
+    stream.onAbort(() => {
+      alive = false;
+      sseClients.delete(emit);
+    });
+
+    // Keep connection alive with heartbeat
+    while (alive) {
+      await stream.sleep(25_000);
+      if (!alive) break;
+      try {
+        await stream.writeSSE({ event: 'heartbeat', data: JSON.stringify({ timestamp: Date.now() }) });
+      } catch {
+        break;
+      }
+    }
   });
 });
 
@@ -235,6 +296,11 @@ router.post('/', rateLimit({ windowMs: 60000, maxRequests: 20 }), requireAuth, r
       userAgent: getUserAgent(c),
     });
 
+    // Broadcast user created event
+    if (sanitizedCreated) {
+      broadcastUserChange('user.created', sanitizedCreated);
+    }
+
     return c.json({ success: true, data: sanitizedCreated }, 201);
   } catch (error: any) {
     if (error?.code === 'ER_DUP_ENTRY') {
@@ -344,6 +410,11 @@ router.put('/:id', rateLimit({ windowMs: 60000, maxRequests: 50 }), requireAuth,
       userAgent: getUserAgent(c),
     });
 
+    // Broadcast user updated event
+    if (sanitizedUpdated) {
+      broadcastUserChange('user.updated', sanitizedUpdated);
+    }
+
     return c.json({ success: true, data: sanitizedUpdated });
   } catch (error: any) {
     if (error?.code === 'ER_DUP_ENTRY') {
@@ -369,6 +440,9 @@ router.delete('/:id', rateLimit({ windowMs: 60000, maxRequests: 30 }), requireAu
     ipAddress: getClientIp(c),
     userAgent: getUserAgent(c),
   });
+
+  // Broadcast user deleted event
+  broadcastUserChange('user.deleted', { id });
 
   return c.json({ success: true, message: 'User dihapus' });
 });
