@@ -544,6 +544,11 @@ export const subscriptions = mysqlTable(
         onboardingUpdatedAt: timestamp('onboarding_updated_at'),
         note: text('note'),
         cancelReason: text('cancel_reason'),
+        // Fase iklan untuk edukasi ekspektasi client (v-auto-client):
+        // learning | optimization | scaling | steady. NULL = derive dari umur startDate.
+        phase: varchar('phase', { length: 32 }),
+        phaseUpdatedAt: timestamp('phase_updated_at'),
+        phaseNote: varchar('phase_note', { length: 255 }),
         dataJson: json('data_json').$type<JsonRecord>(),
         createdAt: timestamp('created_at').defaultNow().notNull(),
         updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
@@ -1363,5 +1368,146 @@ export const credentialShareRelations = relations(credentialShares, ({ one }) =>
     credential: one(credentials, {
         fields: [credentialShares.credentialId],
         references: [credentials.id],
+    }),
+}));
+
+// ─── Client App (v-auto-client) ──────────────────────────────────────
+
+// Feed update/saran dari tim advertiser ke client.
+// type: info | attention | milestone | request | education
+export const clientUpdates = mysqlTable(
+    'client_updates',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        customerId: int('customer_id')
+            .notNull()
+            .references(() => customers.id, { onDelete: 'cascade' }),
+        subscriptionId: int('subscription_id').references(() => subscriptions.id, {
+            onDelete: 'set null',
+        }),
+        authorUserId: int('author_user_id').references(() => users.id, { onDelete: 'set null' }),
+        type: varchar('type', { length: 32 }).notNull().default('info'),
+        title: varchar('title', { length: 255 }).notNull(),
+        body: text('body'),
+        // snapshot angka saat update dibuat, mis. { spend, revenue, roas, period }
+        metricSnapshot: json('metric_snapshot').$type<JsonRecord>(),
+        publishedAt: timestamp('published_at').defaultNow().notNull(),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [
+        index('client_updates_customer_published_idx').on(table.customerId, table.publishedAt),
+        index('client_updates_subscription_idx').on(table.subscriptionId),
+    ]
+);
+
+export const clientUpdateReads = mysqlTable(
+    'client_update_reads',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        updateId: int('update_id')
+            .notNull()
+            .references(() => clientUpdates.id, { onDelete: 'cascade' }),
+        customerId: int('customer_id')
+            .notNull()
+            .references(() => customers.id, { onDelete: 'cascade' }),
+        readAt: timestamp('read_at').defaultNow().notNull(),
+    },
+    (table) => [
+        uniqueIndex('client_update_reads_unique').on(table.updateId, table.customerId),
+        index('client_update_reads_customer_idx').on(table.customerId),
+    ]
+);
+
+// Request aset media dari advertiser ke tim client.
+// type: video | image | copywriting | product_info | other
+// status: requested | in_progress | delivered | approved
+export const assetRequests = mysqlTable(
+    'asset_requests',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        customerId: int('customer_id')
+            .notNull()
+            .references(() => customers.id, { onDelete: 'cascade' }),
+        subscriptionId: int('subscription_id').references(() => subscriptions.id, {
+            onDelete: 'set null',
+        }),
+        requestedBy: int('requested_by').references(() => users.id, { onDelete: 'set null' }),
+        type: varchar('type', { length: 32 }).notNull().default('other'),
+        title: varchar('title', { length: 255 }).notNull(),
+        description: text('description'),
+        dueDate: date('due_date', { mode: 'string' }),
+        status: varchar('status', { length: 32 }).notNull().default('requested'),
+        deliveredAt: timestamp('delivered_at'),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [
+        index('asset_requests_customer_idx').on(table.customerId, table.status),
+        index('asset_requests_subscription_idx').on(table.subscriptionId),
+    ]
+);
+
+// Metric harian per platform untuk TikTok/Shopee (input manual/CSV oleh advertiser).
+// Meta TIDAK lewat tabel ini — tetap dari fb_act_daily_data dkk.
+export const platformDailyMetrics = mysqlTable(
+    'platform_daily_metrics',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        subscriptionId: int('subscription_id')
+            .notNull()
+            .references(() => subscriptions.id, { onDelete: 'cascade' }),
+        platform: varchar('platform', { length: 32 }).notNull(), // tiktok | shopee | meta
+        date: date('date', { mode: 'string' }).notNull(),
+        spend: decimal('spend', { precision: 20, scale: 2 }),
+        revenue: decimal('revenue', { precision: 20, scale: 2 }),
+        orders: int('orders'),
+        clicks: int('clicks'),
+        impressions: int('impressions'),
+        note: varchar('note', { length: 500 }),
+        source: varchar('source', { length: 16 }).notNull().default('manual'), // manual | csv | api
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [
+        uniqueIndex('platform_daily_metrics_unique').on(
+            table.subscriptionId,
+            table.platform,
+            table.date
+        ),
+        index('platform_daily_metrics_sub_date_idx').on(table.subscriptionId, table.date),
+    ]
+);
+
+export const clientUpdateRelations = relations(clientUpdates, ({ one, many }) => ({
+    customer: one(customers, { fields: [clientUpdates.customerId], references: [customers.id] }),
+    subscription: one(subscriptions, {
+        fields: [clientUpdates.subscriptionId],
+        references: [subscriptions.id],
+    }),
+    author: one(users, { fields: [clientUpdates.authorUserId], references: [users.id] }),
+    reads: many(clientUpdateReads),
+}));
+
+export const clientUpdateReadRelations = relations(clientUpdateReads, ({ one }) => ({
+    update: one(clientUpdates, {
+        fields: [clientUpdateReads.updateId],
+        references: [clientUpdates.id],
+    }),
+}));
+
+export const assetRequestRelations = relations(assetRequests, ({ one }) => ({
+    customer: one(customers, { fields: [assetRequests.customerId], references: [customers.id] }),
+    subscription: one(subscriptions, {
+        fields: [assetRequests.subscriptionId],
+        references: [subscriptions.id],
+    }),
+    requester: one(users, { fields: [assetRequests.requestedBy], references: [users.id] }),
+}));
+
+export const platformDailyMetricRelations = relations(platformDailyMetrics, ({ one }) => ({
+    subscription: one(subscriptions, {
+        fields: [platformDailyMetrics.subscriptionId],
+        references: [subscriptions.id],
     }),
 }));

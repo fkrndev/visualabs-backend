@@ -37,6 +37,8 @@ import advertiserHomeRoutes from "./routes/advertiserHome";
 import notificationsRoutes from "./routes/notifications";
 import onboardingRoutes from "./routes/onboarding";
 import credentialRoutes from "./routes/credentials";
+import clientAppRoutes from "./routes/clientApp";
+import advertiserContentRoutes from "./routes/advertiserContent";
 import openApiSpec from "./openapi/spec";
 import { role } from "./utils/auth/role";
 // import { readFileSync } from "fs";
@@ -58,7 +60,15 @@ const publicCors = cors({
 
 // CORS untuk protected routes
 const protectedCors = cors({
-  origin: ["http://localhost:2026", "http://127.0.0.1:2026"], // Sesuaikan dengan domain yang diizinkan
+  origin: [
+    "http://localhost:2026",
+    "http://127.0.0.1:2026",
+    // v-auto-client (aplikasi client Visualabs)
+    "http://localhost:2027",
+    "http://127.0.0.1:2027",
+    "https://client.visualabs.id",
+    "https://client-vims.dots.my.id",
+  ],
   allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
   allowHeaders: ["Content-Type", "Authorization"],
   credentials: true,
@@ -117,6 +127,8 @@ app.route("/advertiser-home", advertiserHomeRoutes);
 app.route("/notifications", notificationsRoutes);
 app.route("/onboarding", onboardingRoutes);
 app.route("/credentials", credentialRoutes);
+app.route("/client", clientAppRoutes);
+app.route("/advertiser", advertiserContentRoutes);
 
 app.notFound((c) => {
   return c.json(

@@ -13,8 +13,22 @@ import {
   fetchAdPreview,
   type TimeRange,
 } from "../services/metaApi";
+import { requireAuth } from "../middleware/auth";
+import {
+  resolveAdvertiserScope,
+  type AdvertiserScope,
+} from "../utils/scope/advertiserScope";
 
+/**
+ * Dashboard performa Meta Ads untuk staff/advertiser (v-auto-frontend).
+ * Semua endpoint pakai JWT staff (`requireAuth`); non-management dibatasi ke
+ * fb_act milik client yang berelasi (`resolveAdvertiserScope` — sama persis
+ * dengan `advertiserContent.ts`). Sebelumnya route ini TIDAK punya auth sama
+ * sekali — fbActId dipercaya mentah-mentah dari client.
+ */
 const router = new Hono();
+
+router.use("*", requireAuth);
 
 const basePayload = z.object({
   fbActId: z.number().int().positive(),
@@ -23,6 +37,13 @@ const basePayload = z.object({
   compDateFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   compDateTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 });
+
+function canFbAct(scope: AdvertiserScope, fbActId: number): boolean {
+  return scope.kind === "admin" || scope.fbActIds.includes(fbActId);
+}
+
+const forbidden = (c: any) =>
+  c.json({ success: false, message: "Tidak punya akses ke akun iklan ini" }, 403);
 
 async function resolveActAndToken(fbActId: number) {
   const act = await db.query.fbAct.findFirst({ where: eq(fbAct.id, fbActId) });
@@ -39,6 +60,10 @@ async function resolveActAndToken(fbActId: number) {
 // POST /marketing-dashboard/overview
 router.post("/overview", zValidator("json", basePayload), async (c) => {
   const { fbActId, dateFrom, dateTo, compDateFrom, compDateTo } = c.req.valid("json");
+
+  const scopeResult = await resolveAdvertiserScope(c);
+  if (!scopeResult.ok) return scopeResult.response;
+  if (!canFbAct(scopeResult.scope, fbActId)) return forbidden(c);
 
   try {
     const { act, token } = await resolveActAndToken(fbActId);
@@ -86,6 +111,10 @@ router.post("/overview", zValidator("json", basePayload), async (c) => {
 router.post("/campaign", zValidator("json", basePayload), async (c) => {
   const { fbActId, dateFrom, dateTo } = c.req.valid("json");
 
+  const scopeResult = await resolveAdvertiserScope(c);
+  if (!scopeResult.ok) return scopeResult.response;
+  if (!canFbAct(scopeResult.scope, fbActId)) return forbidden(c);
+
   try {
     const { act, token } = await resolveActAndToken(fbActId);
     const actId = act.actId.replace(/^act_/, "");
@@ -103,6 +132,10 @@ router.post("/campaign", zValidator("json", basePayload), async (c) => {
 // POST /marketing-dashboard/ad
 router.post("/ad", zValidator("json", basePayload), async (c) => {
   const { fbActId, dateFrom, dateTo } = c.req.valid("json");
+
+  const scopeResult = await resolveAdvertiserScope(c);
+  if (!scopeResult.ok) return scopeResult.response;
+  if (!canFbAct(scopeResult.scope, fbActId)) return forbidden(c);
 
   try {
     const { act, token } = await resolveActAndToken(fbActId);
@@ -122,6 +155,10 @@ router.post("/ad", zValidator("json", basePayload), async (c) => {
 router.post("/breakdown/age", zValidator("json", basePayload), async (c) => {
   const { fbActId, dateFrom, dateTo } = c.req.valid("json");
 
+  const scopeResult = await resolveAdvertiserScope(c);
+  if (!scopeResult.ok) return scopeResult.response;
+  if (!canFbAct(scopeResult.scope, fbActId)) return forbidden(c);
+
   try {
     const { act, token } = await resolveActAndToken(fbActId);
     const actId = act.actId.replace(/^act_/, "");
@@ -138,6 +175,10 @@ router.post("/breakdown/age", zValidator("json", basePayload), async (c) => {
 router.post("/breakdown/gender", zValidator("json", basePayload), async (c) => {
   const { fbActId, dateFrom, dateTo } = c.req.valid("json");
 
+  const scopeResult = await resolveAdvertiserScope(c);
+  if (!scopeResult.ok) return scopeResult.response;
+  if (!canFbAct(scopeResult.scope, fbActId)) return forbidden(c);
+
   try {
     const { act, token } = await resolveActAndToken(fbActId);
     const actId = act.actId.replace(/^act_/, "");
@@ -153,6 +194,10 @@ router.post("/breakdown/gender", zValidator("json", basePayload), async (c) => {
 // POST /marketing-dashboard/breakdown/device
 router.post("/breakdown/device", zValidator("json", basePayload), async (c) => {
   const { fbActId, dateFrom, dateTo } = c.req.valid("json");
+
+  const scopeResult = await resolveAdvertiserScope(c);
+  if (!scopeResult.ok) return scopeResult.response;
+  if (!canFbAct(scopeResult.scope, fbActId)) return forbidden(c);
 
   try {
     const { act, token } = await resolveActAndToken(fbActId);
@@ -175,6 +220,10 @@ const adPreviewPayload = z.object({
 router.post("/ad-preview", zValidator("json", adPreviewPayload), async (c) => {
   const { fbActId, adId } = c.req.valid("json");
 
+  const scopeResult = await resolveAdvertiserScope(c);
+  if (!scopeResult.ok) return scopeResult.response;
+  if (!canFbAct(scopeResult.scope, fbActId)) return forbidden(c);
+
   try {
     const { token } = await resolveActAndToken(fbActId);
     const result = await fetchAdPreview(adId, token);
@@ -194,6 +243,10 @@ const configPayload = z.object({
 
 router.put("/config", zValidator("json", configPayload), async (c) => {
   const { fbActId, dataJson } = c.req.valid("json");
+
+  const scopeResult = await resolveAdvertiserScope(c);
+  if (!scopeResult.ok) return scopeResult.response;
+  if (!canFbAct(scopeResult.scope, fbActId)) return forbidden(c);
 
   try {
     const act = await db.query.fbAct.findFirst({ where: eq(fbAct.id, fbActId) });

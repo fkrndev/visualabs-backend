@@ -158,6 +158,33 @@ export async function fetchInsightsByBreakdown(
   return data;
 }
 
+// Ad creative thumbnails (batch) — gambar statis untuk kartu "Iklan Terbaik"
+// di client app; sengaja BUKAN fetchAdPreview (iframe embed), lihat catatan
+// di docs/perform-fb-mobile-version.md §3.3.
+export async function fetchAdThumbnails(
+  adIds: string[],
+  token: string
+): Promise<Record<string, string | null>> {
+  if (adIds.length === 0) return {};
+
+  const key = `ad-thumbs-${adIds.slice().sort().join(",")}`;
+  const cached = getCache(key) as Record<string, string | null> | null;
+  if (cached) return cached;
+
+  const data: any = await metaFetch("", {
+    ids: adIds.join(","),
+    fields: "creative{thumbnail_url}",
+  }, token);
+
+  const result: Record<string, string | null> = {};
+  for (const id of adIds) {
+    result[id] = data?.[id]?.creative?.thumbnail_url ?? null;
+  }
+
+  setCache(key, result, 5 * 60_000);
+  return result;
+}
+
 // Ad preview — returns HTML iframe body
 export async function fetchAdPreview(adId: string, token: string) {
   const key = `preview-${adId}`;
