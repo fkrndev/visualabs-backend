@@ -59,16 +59,10 @@ const publicCors = cors({
 });
 
 // CORS untuk protected routes
+// origin di-reflect balik (bukan literal "*") supaya semua domain diizinkan
+// sekaligus tetap valid untuk browser saat credentials: true dipakai
 const protectedCors = cors({
-  origin: [
-    "http://localhost:2026",
-    "http://127.0.0.1:2026",
-    // v-auto-client (aplikasi client Visualabs)
-    "http://localhost:2027",
-    "http://127.0.0.1:2027",
-    "https://client.visualabs.id",
-    "https://client-vims.dots.my.id",
-  ],
+  origin: (origin) => origin,
   allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
   allowHeaders: ["Content-Type", "Authorization"],
   credentials: true,
