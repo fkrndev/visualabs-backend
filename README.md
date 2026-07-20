@@ -30,11 +30,21 @@ cd ~/web/vims.dots.my.id/private/v-auto-backend/
 
 
 # deploy backend
-## pull
-cd /home/visualabs/web/vims.dots.my.id/private/v-auto-backend && git pull --ff-only
 
-## restart
-cd /home/visualabs/web/vims.dots.my.id/private/v-auto-backend && pm2 restart vims && pm2 save
+**Otomatis: push ke `main` → live.** GitHub Actions SSH ke server dan mengirim
+`deploy v-auto-backend`; git pull, `bun install`, dan `pm2 restart vims` semuanya
+berjalan di server (`~/bin/deploy.sh`). Tidak ada langkah manual.
+
+⚠️ **Migrasi DB TIDAK ikut otomatis.** Kalau schema berubah, jalankan sendiri:
+```sh
+ssh visualabs@51.79.222.48
+cd ~/web/vims.dots.my.id/private/v-auto-backend && bun scripts/apply-migration.ts drizzle/<file>.sql
+```
+
+Deploy manual (kalau Actions bermasalah):
+```sh
+ssh visualabs@51.79.222.48 '~/bin/deploy.sh v-auto-backend'
+```
 
 
 https://developers.facebook.com/tools/accesstoken/
