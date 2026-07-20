@@ -35,3 +35,6 @@ cd /home/visualabs/web/vims.dots.my.id/private/v-auto-backend && git pull --ff-o
 
 ## restart
 cd /home/visualabs/web/vims.dots.my.id/private/v-auto-backend && pm2 restart vims && pm2 save
+
+
+https://developers.facebook.com/tools/accesstoken/

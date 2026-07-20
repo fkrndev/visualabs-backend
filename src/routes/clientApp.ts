@@ -8,8 +8,7 @@ import {
   assetRequests,
   clientUpdateReads,
   clientUpdates,
-  fbActDailyData,
-  fbActResultBreakdownDaily,
+  fbAct,
   fbToken,
   platformDailyMetrics,
   profiles,
@@ -24,10 +23,13 @@ import {
   type CustomerSubscription,
 } from "../utils/scope/customerScope";
 import {
+  fetchInsights,
+  fetchInsightsPerDay,
   fetchInsightsByCampaign,
   fetchInsightsByAd,
   fetchInsightsByBreakdown,
   fetchAdThumbnails,
+  type TimeRange,
 } from "../services/metaApi";
 
 /**
@@ -53,6 +55,20 @@ function daysAgoWibStr(days: number): string {
 
 function monthStartWibStr(): string {
   return `${todayWibStr().slice(0, 8)}01`;
+}
+
+/** "2026-07-17" + delta hari → "2026-07-18". Aman lintas bulan/tahun (UTC murni). */
+function addDaysStr(dateStr: string, delta: number): string {
+  const d = new Date(`${dateStr}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + delta);
+  return d.toISOString().slice(0, 10);
+}
+
+/** Selisih hari antar dua tanggal string (0 = tanggal sama). */
+function diffDaysStr(from: string, to: string): number {
+  const a = Date.parse(`${from}T00:00:00Z`);
+  const b = Date.parse(`${to}T00:00:00Z`);
+  return Math.round((b - a) / 86_400_000);
 }
 
 const toDateStr = (d: unknown): string =>
@@ -125,80 +141,58 @@ type MetaDaily = Map<
 >;
 
 /**
- * Ambil data harian Meta (spend/impressions/clicks + revenue/results dari
- * breakdown) untuk sekumpulan act_id, dikelompokkan per act lalu per tanggal.
- * results = sum baris breakdown primary (result_type=0); revenue = sum purchase_value.
+ * Data harian Meta per act → per tanggal, langsung dari Graph API.
+ *
+ * Dulu ini membaca tabel sync (fb_act_daily_data + fb_act_result_breakdown_daily)
+ * yang diisi job metaAdsDailyReport. Job itu tidak pernah terjadwal — hanya ada
+ * satu run manual — sehingga tabelnya berhenti di 1 Jun 2026 dan semua angka di
+ * app client jadi 0 sementara dashboard staff (yang selalu live) menampilkan
+ * angka sebenarnya. Sekarang sumbernya sama dengan dashboard staff.
+ *
+ * `statusLevel` (kesehatan saldo akun) tidak ada di data insight — itu urusan
+ * job monitoring saldo, bukan performa iklan — jadi selalu 0 di sini.
  */
 async function fetchMetaDaily(
-  actIds: string[],
+  entries: Array<{ actId: string; token: string }>,
   fromStr: string,
   toStr: string,
 ): Promise<Map<string, MetaDaily>> {
   const byAct = new Map<string, MetaDaily>();
-  if (actIds.length === 0) return byAct;
+  if (entries.length === 0) return byAct;
 
-  const ensure = (actId: string, date: string) => {
-    let daily = byAct.get(actId);
-    if (!daily) {
-      daily = new Map();
-      byAct.set(actId, daily);
-    }
-    let row = daily.get(date);
-    if (!row) {
-      row = { spend: 0, impressions: 0, clicks: 0, revenue: 0, results: 0, statusLevel: 0 };
-      daily.set(date, row);
-    }
-    return row;
-  };
+  await Promise.all(
+    entries.map(async (e) => {
+      let rows: any[] = [];
+      try {
+        const res: any = await fetchInsightsPerDay(e.actId.replace(/^act_/, ""), e.token, {
+          since: fromStr,
+          until: toStr,
+        });
+        rows = res?.data ?? [];
+      } catch (err) {
+        // Satu akun bermasalah (token expired dsb) jangan menjatuhkan seluruh
+        // ringkasan — akun lain tetap tampil.
+        console.error("[client/fetchMetaDaily]", e.actId, err);
+        return;
+      }
 
-  const dailyRows = await db
-    .select({
-      actId: fbActDailyData.actId,
-      date: fbActDailyData.date,
-      spend: fbActDailyData.spend,
-      impressions: fbActDailyData.impressions,
-      linkClicks: fbActDailyData.linkClicks,
-      statusLevel: fbActDailyData.statusLevel,
-    })
-    .from(fbActDailyData)
-    .where(
-      and(
-        inArray(fbActDailyData.actId, actIds),
-        gte(fbActDailyData.date, fromStr),
-        lte(fbActDailyData.date, toStr),
-      ),
-    );
-
-  for (const r of dailyRows) {
-    const row = ensure(r.actId, toDateStr(r.date));
-    row.spend += num(r.spend);
-    row.impressions += num(r.impressions);
-    row.clicks += num(r.linkClicks);
-    row.statusLevel = Math.max(row.statusLevel, num(r.statusLevel));
-  }
-
-  const breakdownRows = await db
-    .select({
-      actId: fbActResultBreakdownDaily.actId,
-      date: fbActResultBreakdownDaily.date,
-      resultType: fbActResultBreakdownDaily.resultType,
-      results: fbActResultBreakdownDaily.results,
-      purchaseValue: fbActResultBreakdownDaily.purchaseValue,
-    })
-    .from(fbActResultBreakdownDaily)
-    .where(
-      and(
-        inArray(fbActResultBreakdownDaily.actId, actIds),
-        gte(fbActResultBreakdownDaily.date, fromStr),
-        lte(fbActResultBreakdownDaily.date, toStr),
-      ),
-    );
-
-  for (const r of breakdownRows) {
-    const row = ensure(r.actId, toDateStr(r.date));
-    row.revenue += num(r.purchaseValue);
-    if (num(r.resultType) === 0) row.results += num(r.results);
-  }
+      const daily: MetaDaily = new Map();
+      for (const row of rows) {
+        const date = String(row?.date_start ?? "").slice(0, 10);
+        if (!date) continue;
+        const s = summarizeInsight(row);
+        daily.set(date, {
+          spend: s.spend,
+          impressions: s.impressions,
+          clicks: s.clicks,
+          revenue: s.revenue,
+          results: s.purchase,
+          statusLevel: 0,
+        });
+      }
+      byAct.set(e.actId, daily);
+    }),
+  );
 
   return byAct;
 }
@@ -273,12 +267,14 @@ function bucketize(rows: any[], key: string, valueKey: "spend" | "reach" = "reac
     .sort((a, b) => b.value - a.value);
 }
 
-/** Resolve token per fb_act milik subscription — kepemilikan sudah dipastikan lewat scope. */
-async function actTokensForSub(
-  scope: CustomerScope,
-  subscriptionId: number,
+/**
+ * Pasangkan tiap fb_act dengan token-nya. `actId` tetap mentah (sesuai isi
+ * scope.fbActs) supaya bisa dipakai sebagai key yang cocok dengan scope.
+ * Kepemilikan sudah dipastikan lewat scope.
+ */
+async function actTokensRaw(
+  acts: CustomerScope["fbActs"],
 ): Promise<Array<{ actId: string; token: string }>> {
-  const acts = scope.fbActs.filter((f) => f.subscriptionId === subscriptionId);
   const tokenIds = Array.from(
     new Set(acts.map((a) => a.tokenId).filter((id): id is number => id != null)),
   );
@@ -292,7 +288,16 @@ async function actTokensForSub(
 
   return acts
     .filter((a) => a.tokenId != null && tokenMap.has(a.tokenId))
-    .map((a) => ({ actId: a.actId.replace(/^act_/, ""), token: tokenMap.get(a.tokenId!)! }));
+    .map((a) => ({ actId: a.actId, token: tokenMap.get(a.tokenId!)! }));
+}
+
+/** Act + token milik satu subscription, `actId` sudah siap pakai untuk Graph API. */
+async function actTokensForSub(
+  scope: CustomerScope,
+  subscriptionId: number,
+): Promise<Array<{ actId: string; token: string }>> {
+  const acts = await actTokensRaw(scope.fbActs.filter((f) => f.subscriptionId === subscriptionId));
+  return acts.map((a) => ({ actId: a.actId.replace(/^act_/, ""), token: a.token }));
 }
 
 /** Validasi subscriptionId milik customer & platform-nya Meta. */
@@ -306,10 +311,189 @@ async function resolveMetaSub(
   return { scope, sub };
 }
 
-const metaDetailQuery = z.object({
+/**
+ * Rentang untuk semua endpoint /performance/meta/*. Dua bentuk:
+ * - `dateFrom`+`dateTo` — rentang bebas (date picker di app).
+ * - `days` — preset (7/14/30), dihitung mundur dari hari ini.
+ */
+const metaRangeQuery = z.object({
   subscriptionId: z.coerce.number().int(),
-  days: z.coerce.number().int().min(7).max(90).default(7),
+  days: z.coerce.number().int().min(1).max(365).optional(),
+  dateFrom: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+  dateTo: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
 });
+
+type MetaRange = { from: string; to: string; compFrom: string; compTo: string };
+
+/**
+ * Samakan persis dengan /marketing-dashboard (v-auto-frontend): default 30 hari
+ * terakhir TERMASUK hari ini, dan periode pembanding = rentang sepanjang itu
+ * tepat sebelum `from`. Dulu client app berhenti di H-1 sehingga angkanya tak
+ * pernah sama dengan dashboard staff.
+ */
+function resolveMetaRange(q: z.infer<typeof metaRangeQuery>): MetaRange {
+  const to = q.dateTo ?? todayWibStr();
+  const from = q.dateFrom ?? daysAgoWibStr(q.days ?? 30);
+  const span = Math.max(0, diffDaysStr(from, to));
+  const compTo = addDaysStr(from, -1);
+  return { from, to, compFrom: addDaysStr(compTo, -span), compTo };
+}
+
+const rangeOf = (r: MetaRange): TimeRange => ({ since: r.from, until: r.to });
+
+/** Metrik KPI default — sama dengan `dataTopAction` di dashboard staff. */
+const DEFAULT_TOP_METRICS = ["spend", "purchase", "clicks", "impressions", "reach", "ctr"];
+
+const ADDITIVE_INSIGHT_FIELDS = ["impressions", "spend", "clicks", "reach"] as const;
+const ACTION_INSIGHT_FIELDS = ["actions", "action_values", "unique_actions"] as const;
+
+/** Jumlahkan array `actions`-style (per action_type) dari banyak baris insight. */
+function sumActionArrays(rows: any[], field: string): MetaAction[] | undefined {
+  const acc = new Map<string, number>();
+  let seen = false;
+  for (const row of rows) {
+    const arr = row?.[field] as MetaAction[] | undefined;
+    if (!Array.isArray(arr)) continue;
+    seen = true;
+    for (const a of arr) acc.set(a.action_type, (acc.get(a.action_type) ?? 0) + num(a.value));
+  }
+  if (!seen) return undefined;
+  return Array.from(acc.entries()).map(([action_type, value]) => ({
+    action_type,
+    value: String(value),
+  }));
+}
+
+/**
+ * Gabungkan beberapa baris insight jadi satu.
+ *
+ * Satu baris → dikembalikan apa adanya, supaya angkanya identik byte-per-byte
+ * dengan yang dihitung Meta untuk dashboard staff (kasus paling umum: 1 sub = 1
+ * akun iklan). Baru kalau sub punya >1 akun, field aditif dijumlahkan dan field
+ * turunan (ctr/cpm/cost_per_action_type) dihitung ulang — menjumlahkan rata-rata
+ * jelas salah. Catatan: `reach` antar-akun bisa overlap orangnya, jadi hasil
+ * penjumlahan adalah batas atas, bukan reach unik sebenarnya.
+ */
+function sumInsightRows(rows: any[]): any | null {
+  const valid = rows.filter(Boolean);
+  if (valid.length === 0) return null;
+  if (valid.length === 1) return valid[0];
+
+  const out: any = { ...valid[0] };
+  for (const f of ADDITIVE_INSIGHT_FIELDS) {
+    out[f] = String(valid.reduce((s, r) => s + num(r[f]), 0));
+  }
+  for (const f of ACTION_INSIGHT_FIELDS) {
+    const merged = sumActionArrays(valid, f);
+    if (merged) out[f] = merged;
+    else delete out[f];
+  }
+
+  const spend = num(out.spend);
+  const impressions = num(out.impressions);
+  const clicks = num(out.clicks);
+  out.ctr = impressions > 0 ? String((clicks / impressions) * 100) : "0";
+  out.cpm = impressions > 0 ? String((spend / impressions) * 1000) : "0";
+  out.cpc = clicks > 0 ? String(spend / clicks) : "0";
+
+  // cost_per_action_type: hitung ulang dari spend & actions gabungan.
+  const actions = (out.actions ?? []) as MetaAction[];
+  out.cost_per_action_type = actions.map((a) => ({
+    action_type: a.action_type,
+    value: num(a.value) > 0 ? String(spend / num(a.value)) : "0",
+  }));
+
+  return out;
+}
+
+/** Insight live per akun iklan, dijumlahkan jadi satu baris agregat. */
+async function fetchLiveInsight(
+  acts: Array<{ actId: string; token: string }>,
+  range: TimeRange,
+): Promise<any | null> {
+  const rows = await Promise.all(
+    acts.map(async (a) => {
+      const res: any = await fetchInsights(a.actId, a.token, range);
+      return res?.data?.[0] ?? null;
+    }),
+  );
+  return sumInsightRows(rows);
+}
+
+/** Insight harian live, dijumlahkan per tanggal lalu diurutkan naik. */
+async function fetchLivePerDay(
+  acts: Array<{ actId: string; token: string }>,
+  range: TimeRange,
+): Promise<any[]> {
+  const perAct = await Promise.all(
+    acts.map(async (a) => {
+      const res: any = await fetchInsightsPerDay(a.actId, a.token, range);
+      return (res?.data ?? []) as any[];
+    }),
+  );
+
+  const byDate = new Map<string, any[]>();
+  for (const row of perAct.flat()) {
+    const d = row?.date_start;
+    if (!d) continue;
+    const list = byDate.get(d) ?? [];
+    list.push(row);
+    byDate.set(d, list);
+  }
+
+  return Array.from(byDate.entries())
+    .map(([, rows]) => sumInsightRows(rows))
+    .filter(Boolean)
+    .sort((a, b) => String(a.date_start).localeCompare(String(b.date_start)));
+}
+
+/**
+ * Konfigurasi kartu KPI milik akun iklan sub ini — dibaca dari `fb_act.data_json`
+ * yang SAMA dengan yang disimpan dashboard staff, supaya kartu di app mengikuti
+ * apa yang sudah diatur advertiser. Ambil act pertama yang punya konfigurasi.
+ */
+async function metaTopMetricsForSub(
+  scope: CustomerScope,
+  subscriptionId: number,
+): Promise<{ metrics: string[]; actName: string | null }> {
+  const ids = scope.fbActs.filter((f) => f.subscriptionId === subscriptionId).map((f) => f.id);
+  if (ids.length === 0) return { metrics: DEFAULT_TOP_METRICS, actName: null };
+
+  const rows = await db
+    .select({ actName: fbAct.actName, name: fbAct.name, dataJson: fbAct.dataJson })
+    .from(fbAct)
+    .where(inArray(fbAct.id, ids));
+
+  let metrics: string[] | null = null;
+  for (const r of rows) {
+    const parsed =
+      typeof r.dataJson === "string" ? safeJson(r.dataJson) : ((r.dataJson as any) ?? null);
+    const top = parsed?.data_top_action;
+    if (Array.isArray(top) && top.length > 0) {
+      metrics = top.filter((k: unknown) => typeof k === "string");
+      break;
+    }
+  }
+
+  return {
+    metrics: metrics ?? DEFAULT_TOP_METRICS,
+    actName: rows[0]?.actName ?? rows[0]?.name ?? null,
+  };
+}
+
+function safeJson(s: string): any {
+  try {
+    return JSON.parse(s);
+  } catch {
+    return null;
+  }
+}
 
 // ───────────────────────── GET /summary ─────────────────────────
 
@@ -336,7 +520,7 @@ router.get("/summary", async (c) => {
     .limit(1);
 
   // Data Meta untuk semua act milik customer
-  const metaByAct = await fetchMetaDaily(scope.actIds, minDate, today);
+  const metaByAct = await fetchMetaDaily(await actTokensRaw(scope.fbActs), minDate, today);
 
   // Data manual TikTok/Shopee
   const subIds = subs.map((s) => s.id);
@@ -547,10 +731,8 @@ router.get("/performance", zValidator("query", performanceQuery), async (c) => {
   let lastDataDate: string | null = null;
 
   if (sub.platformKey === "meta") {
-    const actIds = scope.fbActs
-      .filter((f) => f.subscriptionId === sub.id)
-      .map((f) => f.actId);
-    const metaByAct = await fetchMetaDaily(actIds, prevFrom, to);
+    const acts = await actTokensRaw(scope.fbActs.filter((f) => f.subscriptionId === sub.id));
+    const metaByAct = await fetchMetaDaily(acts, prevFrom, to);
 
     for (const daily of metaByAct.values()) {
       for (const [date, row] of daily) {
@@ -639,14 +821,70 @@ router.get("/performance", zValidator("query", performanceQuery), async (c) => {
   });
 });
 
+// ───────────────────── GET /performance/meta/insight ─────────────────────
+
+/**
+ * Mirror dari POST /marketing-dashboard/overview (dashboard staff) untuk app
+ * client: sumber data SAMA (Graph API live lewat services/metaApi) dan kartu KPI
+ * mengikuti `fb_act.data_json.data_top_action` yang sama, tapi di-scope per
+ * subscription milik customer sehingga app tak perlu tahu fbActId.
+ *
+ * Sebelumnya app membaca tabel sync harian (fetchMetaDaily) yang diisi job
+ * metaAdsDailyReport — job itu tidak terjadwal, jadi angkanya selalu 0.
+ */
+router.get("/performance/meta/insight", zValidator("query", metaRangeQuery), async (c) => {
+  const customerId = c.get("customerId") as number;
+  const q = c.req.valid("query");
+  const { subscriptionId } = q;
+
+  const resolved = await resolveMetaSub(customerId, subscriptionId);
+  if (!resolved) {
+    return c.json({ success: false, message: "Brand Meta tidak ditemukan" }, 404);
+  }
+
+  const range = resolveMetaRange(q);
+  const acts = await actTokensForSub(resolved.scope, subscriptionId);
+  const { metrics, actName } = await metaTopMetricsForSub(resolved.scope, subscriptionId);
+
+  const base = {
+    subscriptionId,
+    brand: resolved.sub.brand,
+    phase: derivePhase(resolved.sub),
+    account: { actName, actCount: acts.length },
+    metrics,
+    range,
+  };
+
+  if (acts.length === 0) {
+    return c.json({
+      success: true,
+      data: { ...base, current: null, comparison: null, perDay: [] },
+    });
+  }
+
+  try {
+    const [current, perDay, comparison] = await Promise.all([
+      fetchLiveInsight(acts, rangeOf(range)),
+      fetchLivePerDay(acts, rangeOf(range)),
+      fetchLiveInsight(acts, { since: range.compFrom, until: range.compTo }),
+    ]);
+
+    return c.json({ success: true, data: { ...base, current, perDay, comparison } });
+  } catch (e: any) {
+    console.error("[client/performance/meta/insight]", e);
+    return c.json({ success: false, message: e?.message || "Gagal mengambil insight" }, 500);
+  }
+});
+
 // ───────────────────── GET /performance/meta/campaigns ─────────────────────
 
 router.get(
   "/performance/meta/campaigns",
-  zValidator("query", metaDetailQuery),
+  zValidator("query", metaRangeQuery),
   async (c) => {
     const customerId = c.get("customerId") as number;
-    const { subscriptionId, days } = c.req.valid("query");
+    const q = c.req.valid("query");
+    const { subscriptionId } = q;
 
     const resolved = await resolveMetaSub(customerId, subscriptionId);
     if (!resolved) {
@@ -656,7 +894,7 @@ router.get(
     const acts = await actTokensForSub(resolved.scope, subscriptionId);
     if (acts.length === 0) return c.json({ success: true, data: [] });
 
-    const timeRange = { since: daysAgoWibStr(days), until: daysAgoWibStr(1) };
+    const timeRange = rangeOf(resolveMetaRange(q));
 
     try {
       const results = await Promise.all(
@@ -684,10 +922,11 @@ router.get(
 
 router.get(
   "/performance/meta/ads",
-  zValidator("query", metaDetailQuery),
+  zValidator("query", metaRangeQuery),
   async (c) => {
     const customerId = c.get("customerId") as number;
-    const { subscriptionId, days } = c.req.valid("query");
+    const q = c.req.valid("query");
+    const { subscriptionId } = q;
 
     const resolved = await resolveMetaSub(customerId, subscriptionId);
     if (!resolved) {
@@ -697,7 +936,7 @@ router.get(
     const acts = await actTokensForSub(resolved.scope, subscriptionId);
     if (acts.length === 0) return c.json({ success: true, data: [] });
 
-    const timeRange = { since: daysAgoWibStr(days), until: daysAgoWibStr(1) };
+    const timeRange = rangeOf(resolveMetaRange(q));
 
     try {
       const perAct = await Promise.all(
@@ -752,10 +991,11 @@ router.get(
 
 router.get(
   "/performance/meta/demographics",
-  zValidator("query", metaDetailQuery),
+  zValidator("query", metaRangeQuery),
   async (c) => {
     const customerId = c.get("customerId") as number;
-    const { subscriptionId, days } = c.req.valid("query");
+    const q = c.req.valid("query");
+    const { subscriptionId } = q;
 
     const resolved = await resolveMetaSub(customerId, subscriptionId);
     if (!resolved) {
@@ -767,7 +1007,7 @@ router.get(
       return c.json({ success: true, data: { age: [], gender: [], device: [] } });
     }
 
-    const timeRange = { since: daysAgoWibStr(days), until: daysAgoWibStr(1) };
+    const timeRange = rangeOf(resolveMetaRange(q));
 
     try {
       const [ageRes, genderRes, deviceRes] = await Promise.all([
