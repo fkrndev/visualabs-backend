@@ -6,8 +6,19 @@ import { SQL, and, asc, desc, eq, inArray, like, or } from 'drizzle-orm';
 import { db } from '../db/client';
 import { fbAct, fbToken, fbActDailyData, customers, customerProfiles, subscriptions, users, profiles } from '../db/schema';
 import { syncFbActBalance } from '../jobs/syncFbActBalance';
+import { requireAuth } from '../middleware/auth';
 
 const router = new Hono();
+
+/**
+ * Route ini SEBELUMNYA tidak punya auth sama sekali, padahal responsnya ikut
+ * membawa baris `fb_token` lengkap dengan access token Facebook mentah — siapa
+ * pun tanpa login bisa menariknya, sekaligus mem-bypass `resolveAdvertiserScope`
+ * yang dipasang di `marketingDashboard.ts`. Dua pengamanan sekarang:
+ *   1. `requireAuth` di seluruh endpoint (di bawah), dan
+ *   2. access token mentah dibuang dari respons (lihat `safeToken`).
+ */
+router.use('*', requireAuth);
 
 const tokenUsers = users;
 const tokenProfiles = profiles;
@@ -37,6 +48,19 @@ const fbActPayload = z.object({
 
 const updateFbActPayload = fbActPayload.partial();
 
+/**
+ * Metadata token TANPA nilai access token-nya.
+ *
+ * Konsumen yang ada hanya membaca `token.status` (badge status di
+ * monitoring-ads & tabel akun) — nilai `token` mentah tidak pernah dipakai di
+ * frontend, jadi tidak ada alasan mengirimkannya keluar.
+ */
+function safeToken(row: any) {
+  if (!row) return null;
+  const { token, ...meta } = row;
+  return meta;
+}
+
 function formatRow(row: any) {
   return {
     ...row.fbAct,
@@ -44,7 +68,7 @@ function formatRow(row: any) {
       ? { ...row.customer, profile: row.customerProfile ?? null }
       : null,
     subscription: row.subscription ?? null,
-    token: row.fbToken ?? null,
+    token: safeToken(row.fbToken),
   };
 }
 

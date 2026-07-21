@@ -1511,3 +1511,125 @@ export const platformDailyMetricRelations = relations(platformDailyMetrics, ({ o
         references: [subscriptions.id],
     }),
 }));
+
+// ─── Request Video AI ────────────────────────────────────────────────
+// Pustaka produk & talent reusable milik client + antrian permintaan video AI.
+// Kuota 50 video/bulan PER BRAND (subscription). Prompt 4-flow di-snapshot saat submit.
+
+export type VideoAudience = {
+    ageRanges?: string[];
+    gender?: string;
+    location?: string;
+    notes?: string;
+} | null;
+
+export type VideoTalentBrief = {
+    gender?: string;
+    age?: number | string;
+    setting?: string;
+} | null;
+
+export type VideoPromptSet = {
+    flow1: string;
+    flow2: string;
+    flow3: string;
+    flow4: string;
+} | null;
+
+export const clientProducts = mysqlTable(
+    'client_products',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        customerId: int('customer_id')
+            .notNull()
+            .references(() => customers.id, { onDelete: 'cascade' }),
+        name: varchar('name', { length: 255 }).notNull(),
+        primaryPhotoUrl: varchar('primary_photo_url', { length: 512 }).notNull(),
+        galleryJson: json('gallery_json').$type<string[]>(),
+        description: text('description'),
+        benefits: text('benefits'),
+        archived: tinyint('archived').default(0).notNull(),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [index('client_products_customer_idx').on(table.customerId)]
+);
+
+export const clientTalents = mysqlTable(
+    'client_talents',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        customerId: int('customer_id')
+            .notNull()
+            .references(() => customers.id, { onDelete: 'cascade' }),
+        name: varchar('name', { length: 255 }),
+        photoUrl: varchar('photo_url', { length: 512 }).notNull(),
+        note: varchar('note', { length: 512 }),
+        archived: tinyint('archived').default(0).notNull(),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [index('client_talents_customer_idx').on(table.customerId)]
+);
+
+// status: submitted | processing | delivered | cancelled
+export const videoRequests = mysqlTable(
+    'video_requests',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        customerId: int('customer_id')
+            .notNull()
+            .references(() => customers.id, { onDelete: 'cascade' }),
+        subscriptionId: int('subscription_id')
+            .notNull()
+            .references(() => subscriptions.id, { onDelete: 'cascade' }),
+        productId: int('product_id')
+            .notNull()
+            .references(() => clientProducts.id, { onDelete: 'cascade' }),
+        talentId: int('talent_id').references(() => clientTalents.id, { onDelete: 'set null' }),
+        talentBriefJson: json('talent_brief_json').$type<VideoTalentBrief>(),
+        description: text('description'),
+        benefits: text('benefits'),
+        audienceJson: json('audience_json').$type<VideoAudience>(),
+        contentStyle: varchar('content_style', { length: 40 }).default('grwm').notNull(),
+        platform: varchar('platform', { length: 40 }).default('tiktok').notNull(),
+        requestedCount: int('requested_count').notNull(),
+        status: varchar('status', { length: 20 }).default('submitted').notNull(),
+        promptsJson: json('prompts_json').$type<VideoPromptSet>(),
+        deliveredUrls: json('delivered_urls').$type<string[]>(),
+        adminNote: text('admin_note'),
+        processedBy: int('processed_by').references(() => users.id, { onDelete: 'set null' }),
+        deliveredAt: timestamp('delivered_at'),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [
+        index('video_requests_subscription_idx').on(table.subscriptionId, table.createdAt),
+        index('video_requests_customer_idx').on(table.customerId),
+        index('video_requests_status_idx').on(table.status),
+    ]
+);
+
+export const clientProductRelations = relations(clientProducts, ({ one, many }) => ({
+    customer: one(customers, { fields: [clientProducts.customerId], references: [customers.id] }),
+    requests: many(videoRequests),
+}));
+
+export const clientTalentRelations = relations(clientTalents, ({ one, many }) => ({
+    customer: one(customers, { fields: [clientTalents.customerId], references: [customers.id] }),
+    requests: many(videoRequests),
+}));
+
+export const videoRequestRelations = relations(videoRequests, ({ one }) => ({
+    customer: one(customers, { fields: [videoRequests.customerId], references: [customers.id] }),
+    subscription: one(subscriptions, {
+        fields: [videoRequests.subscriptionId],
+        references: [subscriptions.id],
+    }),
+    product: one(clientProducts, {
+        fields: [videoRequests.productId],
+        references: [clientProducts.id],
+    }),
+    talent: one(clientTalents, { fields: [videoRequests.talentId], references: [clientTalents.id] }),
+    processor: one(users, { fields: [videoRequests.processedBy], references: [users.id] }),
+}));

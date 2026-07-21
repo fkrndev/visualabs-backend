@@ -39,6 +39,8 @@ import onboardingRoutes from "./routes/onboarding";
 import credentialRoutes from "./routes/credentials";
 import clientAppRoutes from "./routes/clientApp";
 import advertiserContentRoutes from "./routes/advertiserContent";
+import uploadRoutes from "./routes/uploads";
+import { clientVideoRoutes, adminVideoRoutes } from "./routes/videoRequest";
 import openApiSpec from "./openapi/spec";
 import { role } from "./utils/auth/role";
 // import { readFileSync } from "fs";
@@ -122,7 +124,10 @@ app.route("/notifications", notificationsRoutes);
 app.route("/onboarding", onboardingRoutes);
 app.route("/credentials", credentialRoutes);
 app.route("/client", clientAppRoutes);
+app.route("/client", clientVideoRoutes);
 app.route("/advertiser", advertiserContentRoutes);
+app.route("/uploads", uploadRoutes);
+app.route("/video-requests", adminVideoRoutes);
 
 app.notFound((c) => {
   return c.json(

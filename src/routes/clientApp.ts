@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
-import { and, desc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
 
 import { db } from "../db/client";
 import {
@@ -156,6 +156,13 @@ async function fetchMetaDaily(
   entries: Array<{ actId: string; token: string }>,
   fromStr: string,
   toStr: string,
+  /**
+   * Diisi dengan actId yang gagal diambil. Satu akun bermasalah memang tidak
+   * boleh menjatuhkan seluruh ringkasan, tapi dulu kegagalannya benar-benar
+   * senyap — angka client berkurang tanpa tanda apa pun. Sekarang pemanggil
+   * bisa menandai responsnya sebagai `partial`.
+   */
+  failed?: Set<string>,
 ): Promise<Map<string, MetaDaily>> {
   const byAct = new Map<string, MetaDaily>();
   if (entries.length === 0) return byAct;
@@ -170,9 +177,8 @@ async function fetchMetaDaily(
         });
         rows = res?.data ?? [];
       } catch (err) {
-        // Satu akun bermasalah (token expired dsb) jangan menjatuhkan seluruh
-        // ringkasan — akun lain tetap tampil.
         console.error("[client/fetchMetaDaily]", e.actId, err);
+        failed?.add(e.actId);
         return;
       }
 
@@ -274,7 +280,7 @@ function bucketize(rows: any[], key: string, valueKey: "spend" | "reach" = "reac
  */
 async function actTokensRaw(
   acts: CustomerScope["fbActs"],
-): Promise<Array<{ actId: string; token: string }>> {
+): Promise<Array<{ id: number; actId: string; token: string }>> {
   const tokenIds = Array.from(
     new Set(acts.map((a) => a.tokenId).filter((id): id is number => id != null)),
   );
@@ -288,16 +294,26 @@ async function actTokensRaw(
 
   return acts
     .filter((a) => a.tokenId != null && tokenMap.has(a.tokenId))
-    .map((a) => ({ actId: a.actId, token: tokenMap.get(a.tokenId!)! }));
+    .map((a) => ({ id: a.id, actId: a.actId, token: tokenMap.get(a.tokenId!)! }));
 }
 
-/** Act + token milik satu subscription, `actId` sudah siap pakai untuk Graph API. */
+/**
+ * Act + token milik satu subscription, `actId` sudah siap pakai untuk Graph API.
+ *
+ * `fbActId` opsional: kalau diisi, hanya akun itu yang dipakai (selector akun di
+ * app client). Difilter dari `scope.fbActs` yang kepemilikannya sudah dipastikan,
+ * jadi fbActId milik customer lain otomatis menghasilkan daftar kosong.
+ */
 async function actTokensForSub(
   scope: CustomerScope,
   subscriptionId: number,
-): Promise<Array<{ actId: string; token: string }>> {
-  const acts = await actTokensRaw(scope.fbActs.filter((f) => f.subscriptionId === subscriptionId));
-  return acts.map((a) => ({ actId: a.actId.replace(/^act_/, ""), token: a.token }));
+  fbActId?: number,
+): Promise<Array<{ id: number; actId: string; token: string }>> {
+  const scoped = scope.fbActs.filter(
+    (f) => f.subscriptionId === subscriptionId && (fbActId == null || f.id === fbActId),
+  );
+  const acts = await actTokensRaw(scoped);
+  return acts.map((a) => ({ ...a, actId: a.actId.replace(/^act_/, "") }));
 }
 
 /** Validasi subscriptionId milik customer & platform-nya Meta. */
@@ -318,6 +334,12 @@ async function resolveMetaSub(
  */
 const metaRangeQuery = z.object({
   subscriptionId: z.coerce.number().int(),
+  /**
+   * Opsional. Kalau diisi, hanya akun iklan itu yang ditampilkan (selector akun);
+   * kalau kosong, semua akun milik subscription ini diagregasi seperti semula.
+   * Kepemilikannya divalidasi lewat scope, bukan dipercaya dari query.
+   */
+  fbActId: z.coerce.number().int().positive().optional(),
   days: z.coerce.number().int().min(1).max(365).optional(),
   dateFrom: z
     .string()
@@ -454,37 +476,99 @@ async function fetchLivePerDay(
 }
 
 /**
- * Konfigurasi kartu KPI milik akun iklan sub ini — dibaca dari `fb_act.data_json`
- * yang SAMA dengan yang disimpan dashboard staff, supaya kartu di app mengikuti
- * apa yang sudah diatur advertiser. Ambil act pertama yang punya konfigurasi.
+ * Satu dashboard tambahan yang dibuat staff di /marketing-dashboard, disimpan
+ * di `fb_act.data_json.data_multi`. Client hanya MEMBACA ini — pembuatan &
+ * penyuntingannya tetap eksklusif di dashboard staff.
  */
-async function metaTopMetricsForSub(
+type DashboardConfig = {
+  title: string;
+  campaign_name: string;
+  data_top_action?: string[];
+};
+
+function isDashboardConfig(d: any): d is DashboardConfig {
+  return !!d && typeof d.title === "string" && typeof d.campaign_name === "string";
+}
+
+/** Akun iklan + konfigurasi dashboard yang menempel padanya. */
+type MetaAccount = {
+  id: number;
+  actId: string;
+  name: string | null;
+  /** Punya baris fb_token? Kalau tidak, akun ini tak bisa di-query ke Graph API. */
+  hasToken: boolean;
+  /** `data_top_action` — null kalau akun ini belum dikonfigurasi staff. */
+  metrics: string[] | null;
+  /** `data_multi` — dashboard tambahan buatan staff. */
+  dashboards: DashboardConfig[];
+};
+
+/**
+ * Semua akun iklan milik satu subscription, beserta konfigurasi kartu KPI &
+ * dashboard tambahan yang disimpan dashboard staff di `fb_act.data_json`.
+ *
+ * `ORDER BY fb_act.id` bukan kosmetik: tanpa itu MySQL tidak menjamin urutan
+ * baris, sehingga "akun mana yang konfigurasinya dipakai" saat mode agregat bisa
+ * berubah antar-request.
+ */
+async function metaAccountsForSub(
   scope: CustomerScope,
   subscriptionId: number,
-): Promise<{ metrics: string[]; actName: string | null }> {
-  const ids = scope.fbActs.filter((f) => f.subscriptionId === subscriptionId).map((f) => f.id);
-  if (ids.length === 0) return { metrics: DEFAULT_TOP_METRICS, actName: null };
+): Promise<MetaAccount[]> {
+  const scoped = scope.fbActs.filter((f) => f.subscriptionId === subscriptionId);
+  if (scoped.length === 0) return [];
 
   const rows = await db
-    .select({ actName: fbAct.actName, name: fbAct.name, dataJson: fbAct.dataJson })
+    .select({
+      id: fbAct.id,
+      actId: fbAct.actId,
+      actName: fbAct.actName,
+      name: fbAct.name,
+      dataJson: fbAct.dataJson,
+    })
     .from(fbAct)
-    .where(inArray(fbAct.id, ids));
+    .where(
+      inArray(
+        fbAct.id,
+        scoped.map((f) => f.id),
+      ),
+    )
+    .orderBy(asc(fbAct.id));
 
-  let metrics: string[] | null = null;
-  for (const r of rows) {
+  const hasTokenById = new Map(scoped.map((f) => [f.id, f.tokenId != null]));
+
+  return rows.map((r) => {
     const parsed =
       typeof r.dataJson === "string" ? safeJson(r.dataJson) : ((r.dataJson as any) ?? null);
     const top = parsed?.data_top_action;
-    if (Array.isArray(top) && top.length > 0) {
-      metrics = top.filter((k: unknown) => typeof k === "string");
-      break;
-    }
-  }
+    const multi = parsed?.data_multi;
+    return {
+      id: r.id,
+      actId: r.actId,
+      name: r.actName ?? r.name ?? null,
+      hasToken: hasTokenById.get(r.id) ?? false,
+      metrics:
+        Array.isArray(top) && top.length > 0
+          ? top.filter((k: unknown): k is string => typeof k === "string")
+          : null,
+      dashboards: Array.isArray(multi) ? multi.filter(isDashboardConfig) : [],
+    };
+  });
+}
 
-  return {
-    metrics: metrics ?? DEFAULT_TOP_METRICS,
-    actName: rows[0]?.actName ?? rows[0]?.name ?? null,
-  };
+/**
+ * Akun mana yang konfigurasinya dipakai untuk kartu KPI & dashboard tambahan.
+ *
+ * Mode satu akun (selector aktif) → akun itu sendiri, tanpa ambiguitas.
+ * Mode agregat → akun PERTAMA (urut id) yang punya konfigurasi. Dulu `actName`
+ * selalu diambil dari baris pertama sementara `metrics` dari baris mana pun yang
+ * pertama punya config — jadi UI bisa menampilkan nama akun A dengan set metrik
+ * milik akun B. Sekarang keduanya dijamin berasal dari akun yang sama.
+ */
+function pickConfigAccount(accounts: MetaAccount[], fbActId?: number): MetaAccount | null {
+  if (accounts.length === 0) return null;
+  if (fbActId != null) return accounts.find((a) => a.id === fbActId) ?? null;
+  return accounts.find((a) => a.metrics != null) ?? accounts[0];
 }
 
 function safeJson(s: string): any {
@@ -520,7 +604,9 @@ router.get("/summary", async (c) => {
     .limit(1);
 
   // Data Meta untuk semua act milik customer
-  const metaByAct = await fetchMetaDaily(await actTokensRaw(scope.fbActs), minDate, today);
+  const metaFailed = new Set<string>();
+  const metaActs = await actTokensRaw(scope.fbActs);
+  const metaByAct = await fetchMetaDaily(metaActs, minDate, today, metaFailed);
 
   // Data manual TikTok/Shopee
   const subIds = subs.map((s) => s.id);
@@ -673,6 +759,11 @@ router.get("/summary", async (c) => {
       profileName: profileRows[0]?.name ?? null,
       overall: {
         statusLevel: overallStatus,
+        /**
+         * true = ada akun iklan yang gagal diambil (token expired dsb), jadi
+         * angka di bawah belum lengkap. Sebelumnya kegagalan seperti ini senyap.
+         */
+        partial: metaFailed.size > 0,
       },
       monthToDate: finalizeTotals(monthToDate),
       brands,
@@ -842,16 +933,42 @@ router.get("/performance/meta/insight", zValidator("query", metaRangeQuery), asy
     return c.json({ success: false, message: "Brand Meta tidak ditemukan" }, 404);
   }
 
+  const accounts = await metaAccountsForSub(resolved.scope, subscriptionId);
+
+  // fbActId yang bukan milik subscription ini (atau milik customer lain) tidak
+  // pernah lolos sampai sini — `accounts` sudah di-scope.
+  if (q.fbActId != null && !accounts.some((a) => a.id === q.fbActId)) {
+    return c.json({ success: false, message: "Akun iklan tidak ditemukan" }, 404);
+  }
+
   const range = resolveMetaRange(q);
-  const acts = await actTokensForSub(resolved.scope, subscriptionId);
-  const { metrics, actName } = await metaTopMetricsForSub(resolved.scope, subscriptionId);
+  const acts = await actTokensForSub(resolved.scope, subscriptionId, q.fbActId);
+  const config = pickConfigAccount(accounts, q.fbActId);
+
+  // Jumlah akun yang SEHARUSNYA ikut vs yang benar-benar bisa di-query. Dulu
+  // `actCount` hanya menghitung yang kedua, jadi akun tanpa token hilang diam-diam
+  // dan angkanya berkurang tanpa tanda apa pun.
+  const expected = q.fbActId != null ? 1 : accounts.length;
 
   const base = {
     subscriptionId,
     brand: resolved.sub.brand,
     phase: derivePhase(resolved.sub),
-    account: { actName, actCount: acts.length },
-    metrics,
+    account: {
+      actName: config?.name ?? null,
+      /** Dipertahankan demi kompatibilitas klien lama. */
+      actCount: acts.length,
+      total: expected,
+      fetched: acts.length,
+      /** true = ada akun yang tidak bisa diambil, jadi angka di bawah belum lengkap. */
+      partial: acts.length < expected,
+    },
+    /** Daftar akun untuk selector di app. Tidak memuat access token. */
+    accounts: accounts.map((a) => ({ id: a.id, actId: a.actId, name: a.name })),
+    selectedFbActId: q.fbActId ?? null,
+    metrics: config?.metrics ?? DEFAULT_TOP_METRICS,
+    /** Dashboard tambahan buatan staff — client hanya menampilkan (read-only). */
+    dashboards: config?.dashboards ?? [],
     range,
   };
 
@@ -891,7 +1008,7 @@ router.get(
       return c.json({ success: false, message: "Brand Meta tidak ditemukan" }, 404);
     }
 
-    const acts = await actTokensForSub(resolved.scope, subscriptionId);
+    const acts = await actTokensForSub(resolved.scope, subscriptionId, q.fbActId);
     if (acts.length === 0) return c.json({ success: true, data: [] });
 
     const timeRange = rangeOf(resolveMetaRange(q));
@@ -907,6 +1024,13 @@ router.get(
           id: row.campaign_id,
           name: row.campaign_name || "Campaign",
           ...summarizeInsight(row),
+          /**
+           * Baris insight mentah. Dibutuhkan dashboard tambahan (data_multi) di
+           * app client, yang harus bisa menghitung metrik apa pun dari 27 key
+           * `data_top_action` (lead, add_to_cart, messaging_conversion, …) —
+           * itu tidak bisa diturunkan dari field ringkasan di atas.
+           */
+          insight: row,
         }))
         .sort((a, b) => b.spend - a.spend);
 
@@ -933,7 +1057,7 @@ router.get(
       return c.json({ success: false, message: "Brand Meta tidak ditemukan" }, 404);
     }
 
-    const acts = await actTokensForSub(resolved.scope, subscriptionId);
+    const acts = await actTokensForSub(resolved.scope, subscriptionId, q.fbActId);
     if (acts.length === 0) return c.json({ success: true, data: [] });
 
     const timeRange = rangeOf(resolveMetaRange(q));
@@ -1002,7 +1126,7 @@ router.get(
       return c.json({ success: false, message: "Brand Meta tidak ditemukan" }, 404);
     }
 
-    const acts = await actTokensForSub(resolved.scope, subscriptionId);
+    const acts = await actTokensForSub(resolved.scope, subscriptionId, q.fbActId);
     if (acts.length === 0) {
       return c.json({ success: true, data: { age: [], gender: [], device: [] } });
     }
@@ -1025,7 +1149,11 @@ router.get(
       return c.json({
         success: true,
         data: {
-          age: bucketize(ageRows, "age"),
+          // Basis nilainya sengaja disamakan dengan dashboard staff: umur pakai
+          // spend (ditampilkan sebagai grafik rupiah), gender & perangkat pakai
+          // reach. Sebelumnya ketiganya pakai reach sehingga persentase umur di
+          // app tidak pernah cocok dengan yang dilihat advertiser.
+          age: bucketize(ageRows, "age", "spend"),
           gender: bucketize(genderRows, "gender"),
           device: bucketize(deviceRows, "impression_device"),
         },
