@@ -292,6 +292,32 @@ router.put('/:id', zValidator('json', updateFbActPayload), async (c) => {
   }
 });
 
+// ── Bulk delete: hapus banyak FB Act sekaligus ────────────────────────
+const bulkDeletePayload = z.object({
+  ids: z.array(z.coerce.number().int()).min(1),
+});
+
+router.post('/bulk-delete', zValidator('json', bulkDeletePayload), async (c) => {
+  const { ids } = c.req.valid('json');
+  // Buang duplikat & id tidak valid sebelum query.
+  const uniqueIds = [...new Set(ids)].filter((id) => Number.isInteger(id));
+  if (!uniqueIds.length) {
+    return c.json({ success: false, message: 'Tidak ada ID valid' }, 400);
+  }
+
+  try {
+    await db.delete(fbAct).where(inArray(fbAct.id, uniqueIds));
+    return c.json({
+      success: true,
+      message: `${uniqueIds.length} FB Act dihapus`,
+      deleted: uniqueIds.length,
+    });
+  } catch (error: any) {
+    console.error(error);
+    return c.json({ success: false, message: 'Gagal menghapus FB Act' }, 500);
+  }
+});
+
 router.delete('/:id', async (c) => {
   const id = Number(c.req.param('id'));
   if (Number.isNaN(id)) {
