@@ -10,6 +10,7 @@ import {
     mysqlTable,
     serial,
     text,
+    time,
     timestamp,
     tinyint,
     uniqueIndex,
@@ -1633,3 +1634,1266 @@ export const videoRequestRelations = relations(videoRequests, ({ one }) => ({
     talent: one(clientTalents, { fields: [videoRequests.talentId], references: [clientTalents.id] }),
     processor: one(users, { fields: [videoRequests.processedBy], references: [users.id] }),
 }));
+
+// ============================================================
+// HR — Master Organisasi (single-tenant: business_id dibuang)
+// ============================================================
+
+export const branches = mysqlTable(
+    'branches',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        name: varchar('name', { length: 191 }).notNull(),
+        code: varchar('code', { length: 64 }),
+        address: text('address'),
+        latitude: decimal('latitude', { precision: 10, scale: 7 }),
+        longitude: decimal('longitude', { precision: 10, scale: 7 }),
+        radius: int('radius'),
+        status: tinyint('status').notNull().default(0),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [uniqueIndex('branches_code_unique').on(table.code)]
+);
+
+export const departments = mysqlTable(
+    'departments',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        name: varchar('name', { length: 191 }).notNull(),
+        code: varchar('code', { length: 64 }),
+        parentId: int('parent_id'),
+        headEmployeeId: int('head_employee_id'),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [index('departments_parent_idx').on(table.parentId)]
+);
+
+export const positions = mysqlTable(
+    'positions',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        departmentId: int('department_id').references(() => departments.id, {
+            onDelete: 'set null',
+        }),
+        name: varchar('name', { length: 191 }).notNull(),
+        level: tinyint('level'),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [index('positions_department_idx').on(table.departmentId)]
+);
+
+// ============================================================
+// HR — Karyawan
+// ============================================================
+
+export const employees = mysqlTable(
+    'employees',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        userId: int('user_id').references(() => users.id, { onDelete: 'set null' }),
+        branchId: int('branch_id').references(() => branches.id, { onDelete: 'set null' }),
+        departmentId: int('department_id').references(() => departments.id, {
+            onDelete: 'set null',
+        }),
+        positionId: int('position_id').references(() => positions.id, { onDelete: 'set null' }),
+        nik: varchar('nik', { length: 64 }),
+        nikKtp: varchar('nik_ktp', { length: 32 }),
+        fullName: varchar('full_name', { length: 191 }).notNull(),
+        nickname: varchar('nickname', { length: 100 }),
+        gender: tinyint('gender'),
+        birthPlace: varchar('birth_place', { length: 100 }),
+        birthDate: date('birth_date', { mode: 'string' }),
+        religion: tinyint('religion'),
+        maritalStatus: tinyint('marital_status'),
+        bloodType: tinyint('blood_type'),
+        address: text('address'),
+        phone: varchar('phone', { length: 32 }),
+        email: varchar('email', { length: 191 }),
+        photo: varchar('photo', { length: 500 }),
+        joinDate: date('join_date', { mode: 'string' }),
+        resignDate: date('resign_date', { mode: 'string' }),
+        employmentType: tinyint('employment_type'),
+        employmentStatus: tinyint('employment_status').notNull().default(0),
+        npwp: varchar('npwp', { length: 32 }),
+        bpjsKesehatanNo: varchar('bpjs_kesehatan_no', { length: 64 }),
+        bpjsKetenagakerjaanNo: varchar('bpjs_ketenagakerjaan_no', { length: 64 }),
+        citizenship: tinyint('citizenship'),
+        identityType: tinyint('identity_type'),
+        landlinePhone: varchar('landline_phone', { length: 32 }),
+        residentialAddress: text('residential_address'),
+        taxStatusCode: tinyint('tax_status_code'),
+        taxWithholderNpwp: varchar('tax_withholder_npwp', { length: 32 }),
+        taxWithholderName: varchar('tax_withholder_name', { length: 191 }),
+        defaultWorkScheduleId: int('default_work_schedule_id'),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [
+        index('employees_user_idx').on(table.userId),
+        index('employees_branch_idx').on(table.branchId),
+        index('employees_department_idx').on(table.departmentId),
+        uniqueIndex('employees_nik_unique').on(table.nik),
+    ]
+);
+
+export const employeeFamilies = mysqlTable(
+    'employee_families',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        employeeId: int('employee_id')
+            .notNull()
+            .references(() => employees.id, { onDelete: 'cascade' }),
+        name: varchar('name', { length: 191 }).notNull(),
+        relationship: tinyint('relationship').notNull(),
+        gender: tinyint('gender'),
+        birthDate: date('birth_date', { mode: 'string' }),
+        nikKtp: varchar('nik_ktp', { length: 32 }),
+        isDependent: tinyint('is_dependent').notNull().default(0),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [index('employee_families_employee_idx').on(table.employeeId)]
+);
+
+export const employeeDocuments = mysqlTable(
+    'employee_documents',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        employeeId: int('employee_id')
+            .notNull()
+            .references(() => employees.id, { onDelete: 'cascade' }),
+        documentType: tinyint('document_type').notNull(),
+        documentNumber: varchar('document_number', { length: 100 }),
+        fileUrl: varchar('file_url', { length: 500 }),
+        expiredAt: date('expired_at', { mode: 'string' }),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [index('employee_documents_employee_idx').on(table.employeeId)]
+);
+
+export const employeeEducations = mysqlTable(
+    'employee_educations',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        employeeId: int('employee_id')
+            .notNull()
+            .references(() => employees.id, { onDelete: 'cascade' }),
+        level: tinyint('level'),
+        institution: varchar('institution', { length: 191 }),
+        major: varchar('major', { length: 191 }),
+        startYear: int('start_year'),
+        endYear: int('end_year'),
+        gpa: decimal('gpa', { precision: 4, scale: 2 }),
+    },
+    (table) => [index('employee_educations_employee_idx').on(table.employeeId)]
+);
+
+export const employeeExperiences = mysqlTable(
+    'employee_experiences',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        employeeId: int('employee_id')
+            .notNull()
+            .references(() => employees.id, { onDelete: 'cascade' }),
+        companyName: varchar('company_name', { length: 191 }),
+        position: varchar('position', { length: 191 }),
+        startDate: date('start_date', { mode: 'string' }),
+        endDate: date('end_date', { mode: 'string' }),
+        description: text('description'),
+    },
+    (table) => [index('employee_experiences_employee_idx').on(table.employeeId)]
+);
+
+export const employeeEmergencyContacts = mysqlTable(
+    'employee_emergency_contacts',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        employeeId: int('employee_id')
+            .notNull()
+            .references(() => employees.id, { onDelete: 'cascade' }),
+        name: varchar('name', { length: 191 }).notNull(),
+        relationship: varchar('relationship', { length: 64 }),
+        phone: varchar('phone', { length: 32 }),
+        address: text('address'),
+    },
+    (table) => [index('employee_emergency_contacts_employee_idx').on(table.employeeId)]
+);
+
+export const employeeBankAccounts = mysqlTable(
+    'employee_bank_accounts',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        employeeId: int('employee_id')
+            .notNull()
+            .references(() => employees.id, { onDelete: 'cascade' }),
+        bankName: varchar('bank_name', { length: 100 }).notNull(),
+        accountNumber: varchar('account_number', { length: 64 }).notNull(),
+        accountHolder: varchar('account_holder', { length: 191 }).notNull(),
+        isPrimary: tinyint('is_primary').notNull().default(0),
+    },
+    (table) => [index('employee_bank_accounts_employee_idx').on(table.employeeId)]
+);
+
+// ============================================================
+// HR — Presensi
+// ============================================================
+
+export const holidays = mysqlTable(
+    'holidays',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        date: date('date', { mode: 'string' }).notNull(),
+        name: varchar('name', { length: 191 }).notNull(),
+        type: tinyint('type').notNull().default(0),
+        isRecurring: tinyint('is_recurring').notNull().default(0),
+        notes: text('notes'),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [
+        index('holidays_date_idx').on(table.date),
+        uniqueIndex('holidays_date_name_unique').on(table.date, table.name),
+    ]
+);
+
+export const workSchedules = mysqlTable(
+    'work_schedules',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        name: varchar('name', { length: 191 }).notNull(),
+        type: tinyint('type').notNull().default(0),
+        startTime: time('start_time'),
+        endTime: time('end_time'),
+        breakDuration: int('break_duration'),
+        lateTolerance: int('late_tolerance'),
+        earlyLeaveTolerance: int('early_leave_tolerance'),
+        workingDays: json('working_days').$type<JsonRecord>(),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => []
+);
+
+export const employeeSchedules = mysqlTable(
+    'employee_schedules',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        employeeId: int('employee_id')
+            .notNull()
+            .references(() => employees.id, { onDelete: 'cascade' }),
+        workScheduleId: int('work_schedule_id')
+            .notNull()
+            .references(() => workSchedules.id, { onDelete: 'cascade' }),
+        date: date('date', { mode: 'string' }).notNull(),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [
+        index('employee_schedules_employee_idx').on(table.employeeId),
+        uniqueIndex('employee_schedules_employee_date_unique').on(table.employeeId, table.date),
+    ]
+);
+
+export const attendances = mysqlTable(
+    'attendances',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        employeeId: int('employee_id')
+            .notNull()
+            .references(() => employees.id, { onDelete: 'cascade' }),
+        workScheduleId: int('work_schedule_id').references(() => workSchedules.id, {
+            onDelete: 'set null',
+        }),
+        date: date('date', { mode: 'string' }).notNull(),
+        checkInAt: timestamp('check_in_at'),
+        checkOutAt: timestamp('check_out_at'),
+        checkInLatitude: decimal('check_in_latitude', { precision: 10, scale: 7 }),
+        checkInLongitude: decimal('check_in_longitude', { precision: 10, scale: 7 }),
+        checkOutLatitude: decimal('check_out_latitude', { precision: 10, scale: 7 }),
+        checkOutLongitude: decimal('check_out_longitude', { precision: 10, scale: 7 }),
+        checkInPhoto: varchar('check_in_photo', { length: 500 }),
+        checkOutPhoto: varchar('check_out_photo', { length: 500 }),
+        checkInAddress: text('check_in_address'),
+        checkOutAddress: text('check_out_address'),
+        checkInType: tinyint('check_in_type'),
+        checkOutType: tinyint('check_out_type'),
+        lateMinutes: int('late_minutes').default(0),
+        earlyLeaveMinutes: int('early_leave_minutes').default(0),
+        overtimeMinutes: int('overtime_minutes').default(0),
+        workMinutes: int('work_minutes').default(0),
+        status: tinyint('status').notNull().default(0),
+        notes: text('notes'),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [
+        index('attendances_employee_idx').on(table.employeeId),
+        uniqueIndex('attendances_employee_date_unique').on(table.employeeId, table.date),
+    ]
+);
+
+export const attendanceApprovals = mysqlTable(
+    'attendance_approvals',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        attendanceId: int('attendance_id').references(() => attendances.id, {
+            onDelete: 'set null',
+        }),
+        employeeId: int('employee_id')
+            .notNull()
+            .references(() => employees.id, { onDelete: 'cascade' }),
+        requestType: tinyint('request_type').notNull(),
+        requestedCheckIn: timestamp('requested_check_in'),
+        requestedCheckOut: timestamp('requested_check_out'),
+        reason: text('reason'),
+        attachment: varchar('attachment', { length: 500 }),
+        status: tinyint('status').notNull().default(0),
+        approverId: int('approver_id').references(() => users.id, { onDelete: 'set null' }),
+        approvedAt: timestamp('approved_at'),
+        rejectionReason: text('rejection_reason'),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [index('attendance_approvals_employee_idx').on(table.employeeId)]
+);
+
+// ============================================================
+// HR — Cuti
+// ============================================================
+
+export const leaveTypes = mysqlTable(
+    'leave_types',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        name: varchar('name', { length: 191 }).notNull(),
+        code: varchar('code', { length: 64 }),
+        maxDaysPerYear: int('max_days_per_year'),
+        isPaid: tinyint('is_paid').notNull().default(1),
+        requiresAttachment: tinyint('requires_attachment').notNull().default(0),
+        gender: tinyint('gender').notNull().default(0),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => []
+);
+
+export const leaves = mysqlTable(
+    'leaves',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        employeeId: int('employee_id')
+            .notNull()
+            .references(() => employees.id, { onDelete: 'cascade' }),
+        leaveTypeId: int('leave_type_id')
+            .notNull()
+            .references(() => leaveTypes.id, { onDelete: 'restrict' }),
+        startDate: date('start_date', { mode: 'string' }).notNull(),
+        endDate: date('end_date', { mode: 'string' }).notNull(),
+        totalDays: decimal('total_days', { precision: 5, scale: 2 }),
+        reason: text('reason'),
+        attachment: varchar('attachment', { length: 500 }),
+        status: tinyint('status').notNull().default(0),
+        approverId: int('approver_id').references(() => users.id, { onDelete: 'set null' }),
+        approvedAt: timestamp('approved_at'),
+        rejectionReason: text('rejection_reason'),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [index('leaves_employee_idx').on(table.employeeId)]
+);
+
+export const leaveBalances = mysqlTable(
+    'leave_balances',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        employeeId: int('employee_id')
+            .notNull()
+            .references(() => employees.id, { onDelete: 'cascade' }),
+        leaveTypeId: int('leave_type_id')
+            .notNull()
+            .references(() => leaveTypes.id, { onDelete: 'cascade' }),
+        year: int('year').notNull(),
+        totalQuota: decimal('total_quota', { precision: 5, scale: 2 }).default('0'),
+        used: decimal('used', { precision: 5, scale: 2 }).default('0'),
+        remaining: decimal('remaining', { precision: 5, scale: 2 }).default('0'),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [
+        uniqueIndex('leave_balances_unique').on(table.employeeId, table.leaveTypeId, table.year),
+    ]
+);
+
+// ============================================================
+// HR — Approval Workflow (generik, polimorfik via module + reference_id)
+// ============================================================
+
+export const approvalWorkflows = mysqlTable(
+    'approval_workflows',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        name: varchar('name', { length: 191 }).notNull(),
+        module: tinyint('module').notNull(),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => []
+);
+
+export const approvalWorkflowSteps = mysqlTable(
+    'approval_workflow_steps',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        approvalWorkflowId: int('workflow_id')
+            .notNull()
+            .references(() => approvalWorkflows.id, { onDelete: 'cascade' }),
+        stepOrder: int('step_order').notNull(),
+        approverType: tinyint('approver_type').notNull(),
+        approverId: int('approver_id').references(() => users.id, { onDelete: 'set null' }),
+        role: tinyint('role'),
+    },
+    (table) => [index('approval_workflow_steps_workflow_idx').on(table.approvalWorkflowId)]
+);
+
+export const approvals = mysqlTable(
+    'approvals',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        module: tinyint('module').notNull(),
+        referenceId: int('reference_id').notNull(),
+        stepOrder: int('step_order').notNull(),
+        approverId: int('approver_id').references(() => users.id, { onDelete: 'set null' }),
+        status: tinyint('status').notNull().default(0),
+        notes: text('notes'),
+        approvedAt: timestamp('approved_at'),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [index('approvals_module_ref_idx').on(table.module, table.referenceId)]
+);
+
+// ============================================================
+// HR Fase 5 — Payroll / Kompensasi (single-tenant, tanpa business_id)
+// ============================================================
+
+export const payrollPeriods = mysqlTable(
+    'payroll_periods',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        periodMonth: tinyint('period_month').notNull(),
+        periodYear: int('period_year').notNull(),
+        startDate: date('start_date', { mode: 'string' }).notNull(),
+        endDate: date('end_date', { mode: 'string' }).notNull(),
+        paymentDate: date('payment_date', { mode: 'string' }),
+        status: tinyint('status').notNull().default(0),
+        createdBy: int('created_by').references(() => users.id, {
+            onDelete: 'set null',
+        }),
+        approvedBy: int('approved_by').references(() => users.id, {
+            onDelete: 'set null',
+        }),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [
+        uniqueIndex('payroll_periods_unique').on(table.periodYear, table.periodMonth),
+    ]
+);
+
+export const payrolls = mysqlTable(
+    'payrolls',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        payrollPeriodId: int('payroll_period_id')
+            .notNull()
+            .references(() => payrollPeriods.id, { onDelete: 'cascade' }),
+        employeeId: int('employee_id')
+            .notNull()
+            .references(() => employees.id, { onDelete: 'restrict' }),
+        basicSalary: decimal('basic_salary', { precision: 15, scale: 2 }).default('0'),
+        totalAllowance: decimal('total_allowance', { precision: 15, scale: 2 }).default('0'),
+        totalOvertime: decimal('total_overtime', { precision: 15, scale: 2 }).default('0'),
+        totalBonus: decimal('total_bonus', { precision: 15, scale: 2 }).default('0'),
+        totalDeduction: decimal('total_deduction', { precision: 15, scale: 2 }).default('0'),
+        totalTax: decimal('total_tax', { precision: 15, scale: 2 }).default('0'),
+        totalBpjs: decimal('total_bpjs', { precision: 15, scale: 2 }).default('0'),
+        grossSalary: decimal('gross_salary', { precision: 15, scale: 2 }).default('0'),
+        netSalary: decimal('net_salary', { precision: 15, scale: 2 }).default('0'),
+        status: tinyint('status').notNull().default(0),
+        paidAt: timestamp('paid_at'),
+        paymentMethod: tinyint('payment_method'),
+        notes: text('notes'),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [
+        index('payrolls_period_idx').on(table.payrollPeriodId),
+        uniqueIndex('payrolls_period_employee_unique').on(
+            table.payrollPeriodId,
+            table.employeeId
+        ),
+    ]
+);
+
+export const payrollComponents = mysqlTable(
+    'payroll_components',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        payrollId: int('payroll_id')
+            .notNull()
+            .references(() => payrolls.id, { onDelete: 'cascade' }),
+        componentType: tinyint('component_type').notNull(),
+        category: tinyint('category').notNull(),
+        name: varchar('name', { length: 191 }).notNull(),
+        amount: decimal('amount', { precision: 15, scale: 2 }).notNull().default('0'),
+        notes: text('notes'),
+    },
+    (table) => [index('payroll_components_payroll_idx').on(table.payrollId)]
+);
+
+export const salaryStructures = mysqlTable(
+    'salary_structures',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        employeeId: int('employee_id')
+            .notNull()
+            .references(() => employees.id, { onDelete: 'cascade' }),
+        basicSalary: decimal('basic_salary', { precision: 15, scale: 2 }).notNull(),
+        effectiveDate: date('effective_date', { mode: 'string' }).notNull(),
+        endDate: date('end_date', { mode: 'string' }),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [index('salary_structures_employee_idx').on(table.employeeId)]
+);
+
+export const allowances = mysqlTable(
+    'allowances',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        name: varchar('name', { length: 191 }).notNull(),
+        type: tinyint('type').notNull().default(0),
+        amount: decimal('amount', { precision: 15, scale: 2 }).default('0'),
+        isTaxable: tinyint('is_taxable').notNull().default(1),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => []
+);
+
+export const employeeAllowances = mysqlTable(
+    'employee_allowances',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        employeeId: int('employee_id')
+            .notNull()
+            .references(() => employees.id, { onDelete: 'cascade' }),
+        allowanceId: int('allowance_id')
+            .notNull()
+            .references(() => allowances.id, { onDelete: 'restrict' }),
+        amount: decimal('amount', { precision: 15, scale: 2 }).notNull(),
+        effectiveDate: date('effective_date', { mode: 'string' }).notNull(),
+        endDate: date('end_date', { mode: 'string' }),
+    },
+    (table) => [
+        index('employee_allowances_employee_idx').on(table.employeeId),
+        index('employee_allowances_allowance_idx').on(table.allowanceId),
+    ]
+);
+
+export const overtimes = mysqlTable(
+    'overtimes',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        employeeId: int('employee_id')
+            .notNull()
+            .references(() => employees.id, { onDelete: 'cascade' }),
+        date: date('date', { mode: 'string' }).notNull(),
+        startTime: time('start_time'),
+        endTime: time('end_time'),
+        totalHours: decimal('total_hours', { precision: 5, scale: 2 }),
+        reason: text('reason'),
+        amount: decimal('amount', { precision: 15, scale: 2 }).default('0'),
+        status: tinyint('status').notNull().default(0),
+        approverId: int('approver_id').references(() => users.id, {
+            onDelete: 'set null',
+        }),
+        approvedAt: timestamp('approved_at'),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [index('overtimes_employee_idx').on(table.employeeId)]
+);
+
+export const cashAdvances = mysqlTable(
+    'cash_advances',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        employeeId: int('employee_id')
+            .notNull()
+            .references(() => employees.id, { onDelete: 'cascade' }),
+        amount: decimal('amount', { precision: 15, scale: 2 }).notNull(),
+        reason: text('reason'),
+        requestDate: date('request_date', { mode: 'string' }).notNull(),
+        repaymentMethod: tinyint('repayment_method').notNull().default(0),
+        installmentCount: int('installment_count'),
+        installmentAmount: decimal('installment_amount', { precision: 15, scale: 2 }),
+        status: tinyint('status').notNull().default(0),
+        approverId: int('approver_id').references(() => users.id, {
+            onDelete: 'set null',
+        }),
+        approvedAt: timestamp('approved_at'),
+        disbursedAt: timestamp('disbursed_at'),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [index('cash_advances_employee_idx').on(table.employeeId)]
+);
+
+export const cashAdvanceRepayments = mysqlTable(
+    'cash_advance_repayments',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        cashAdvanceId: int('cash_advance_id')
+            .notNull()
+            .references(() => cashAdvances.id, { onDelete: 'cascade' }),
+        payrollId: int('payroll_id').references(() => payrolls.id, {
+            onDelete: 'set null',
+        }),
+        amount: decimal('amount', { precision: 15, scale: 2 }).notNull(),
+        paidAt: timestamp('paid_at'),
+    },
+    (table) => [
+        index('cash_advance_repayments_advance_idx').on(table.cashAdvanceId),
+        index('cash_advance_repayments_payroll_idx').on(table.payrollId),
+    ]
+);
+
+export const reimbursements = mysqlTable(
+    'reimbursements',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        employeeId: int('employee_id')
+            .notNull()
+            .references(() => employees.id, { onDelete: 'cascade' }),
+        category: tinyint('category').notNull(),
+        title: varchar('title', { length: 255 }).notNull(),
+        amount: decimal('amount', { precision: 15, scale: 2 }).notNull(),
+        transactionDate: date('transaction_date', { mode: 'string' }).notNull(),
+        description: text('description'),
+        attachment: varchar('attachment', { length: 500 }),
+        status: tinyint('status').notNull().default(0),
+        approverId: int('approver_id').references(() => users.id, {
+            onDelete: 'set null',
+        }),
+        approvedAt: timestamp('approved_at'),
+        paidAt: timestamp('paid_at'),
+        paymentMethod: tinyint('payment_method'),
+        rejectionReason: text('rejection_reason'),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [index('reimbursements_employee_idx').on(table.employeeId)]
+);
+
+// ============================================================
+// HR Fase 5 — Pengaturan Payroll
+// ============================================================
+
+export const payrollSettings = mysqlTable(
+    'payroll_settings',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        payrollCutoffDate: tinyint('payroll_cutoff_date'),
+        paymentDate: tinyint('payment_date'),
+        roundingType: tinyint('rounding_type').notNull().default(0),
+        roundingValue: int('rounding_value').default(1),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => []
+);
+
+export const payslipSettings = mysqlTable(
+    'payslip_settings',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        showCompanyLogo: tinyint('show_company_logo').notNull().default(1),
+        showSignature: tinyint('show_signature').notNull().default(0),
+        signatureName: varchar('signature_name', { length: 191 }),
+        signaturePosition: varchar('signature_position', { length: 191 }),
+        footerNote: text('footer_note'),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => []
+);
+
+export const overtimeSettings = mysqlTable(
+    'overtime_settings',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        calculationMethod: tinyint('calculation_method').notNull().default(0),
+        hourlyRateFormula: varchar('hourly_rate_formula', { length: 255 }),
+        weekdayMultiplier: json('weekday_multiplier').$type<JsonRecord>(),
+        weekendMultiplier: json('weekend_multiplier').$type<JsonRecord>(),
+        holidayMultiplier: json('holiday_multiplier').$type<JsonRecord>(),
+        minOvertimeMinutes: int('min_overtime_minutes').default(30),
+        maxOvertimeHoursPerDay: int('max_overtime_hours_per_day').default(4),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => []
+);
+
+export const prorateSettings = mysqlTable(
+    'prorate_settings',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        calculationBasis: tinyint('calculation_basis').notNull().default(0),
+        applyTo: tinyint('apply_to').notNull().default(0),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => []
+);
+
+export const taxSettings = mysqlTable(
+    'tax_settings',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        calculationMethod: tinyint('calculation_method').notNull().default(0),
+        terEnabled: tinyint('ter_enabled').notNull().default(1),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => []
+);
+
+export const taxBrackets = mysqlTable(
+    'tax_brackets',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        minIncome: decimal('min_income', { precision: 15, scale: 2 }).notNull(),
+        maxIncome: decimal('max_income', { precision: 15, scale: 2 }),
+        rate: decimal('rate', { precision: 5, scale: 2 }).notNull(),
+        effectiveYear: int('effective_year').notNull(),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+    },
+    (table) => [index('tax_brackets_year_idx').on(table.effectiveYear)]
+);
+
+export const ptkpSettings = mysqlTable(
+    'ptkp_settings',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        code: tinyint('code').notNull(),
+        amount: decimal('amount', { precision: 15, scale: 2 }).notNull(),
+        effectiveYear: int('effective_year').notNull(),
+    },
+    (table) => [
+        uniqueIndex('ptkp_settings_year_code_unique').on(table.effectiveYear, table.code),
+    ]
+);
+
+export const bpjsSettings = mysqlTable(
+    'bpjs_settings',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        bpjsType: tinyint('bpjs_type').notNull(),
+        employerRate: decimal('employer_rate', { precision: 5, scale: 2 }).default('0'),
+        employeeRate: decimal('employee_rate', { precision: 5, scale: 2 }).default('0'),
+        salaryCap: decimal('salary_cap', { precision: 15, scale: 2 }),
+        jkkRiskLevel: tinyint('jkk_risk_level'),
+        effectiveDate: date('effective_date', { mode: 'string' }).notNull(),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [index('bpjs_settings_type_idx').on(table.bpjsType)]
+);
+
+export const roundingSettings = mysqlTable(
+    'rounding_settings',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        target: tinyint('target').notNull(),
+        roundingType: tinyint('rounding_type').notNull().default(2),
+        nominal: int('nominal').notNull().default(1),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [uniqueIndex('rounding_settings_target_unique').on(table.target)]
+);
+
+export const payrollBpjsDetails = mysqlTable(
+    'payroll_bpjs_details',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        payrollId: int('payroll_id')
+            .notNull()
+            .references(() => payrolls.id, { onDelete: 'cascade' }),
+        employeeId: int('employee_id')
+            .notNull()
+            .references(() => employees.id, { onDelete: 'cascade' }),
+        bpjsType: tinyint('bpjs_type').notNull(),
+        bpjsNumber: varchar('bpjs_number', { length: 64 }),
+        baseSalary: decimal('base_salary', { precision: 15, scale: 2 }).default('0'),
+        employerAmount: decimal('employer_amount', { precision: 15, scale: 2 }).default('0'),
+        employeeAmount: decimal('employee_amount', { precision: 15, scale: 2 }).default('0'),
+        totalAmount: decimal('total_amount', { precision: 15, scale: 2 }).default('0'),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+    },
+    (table) => [
+        index('payroll_bpjs_details_payroll_idx').on(table.payrollId),
+        index('payroll_bpjs_details_employee_idx').on(table.employeeId),
+    ]
+);
+
+// ============================================================
+// HR — Pengumuman, Audit, Notifikasi (dipakai portal ESS /me)
+// ============================================================
+
+export const announcements = mysqlTable(
+    'announcements',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        title: varchar('title', { length: 255 }).notNull(),
+        content: longtext('content'),
+        category: tinyint('category').notNull().default(0),
+        target: tinyint('target').notNull().default(0),
+        targetIds: json('target_ids').$type<JsonRecord>(),
+        attachment: varchar('attachment', { length: 500 }),
+        publishedAt: timestamp('published_at'),
+        expiredAt: timestamp('expired_at'),
+        createdBy: int('created_by').references(() => users.id, { onDelete: 'set null' }),
+        status: tinyint('status').notNull().default(0),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => []
+);
+
+export const announcementReads = mysqlTable(
+    'announcement_reads',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        announcementId: int('announcement_id')
+            .notNull()
+            .references(() => announcements.id, { onDelete: 'cascade' }),
+        employeeId: int('employee_id')
+            .notNull()
+            .references(() => employees.id, { onDelete: 'cascade' }),
+        readAt: timestamp('read_at').defaultNow().notNull(),
+    },
+    (table) => [
+        uniqueIndex('announcement_reads_unique').on(table.announcementId, table.employeeId),
+    ]
+);
+
+export const activityLogs = mysqlTable(
+    'activity_logs',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        userId: int('user_id').references(() => users.id, { onDelete: 'set null' }),
+        action: tinyint('action').notNull(),
+        module: varchar('module', { length: 64 }),
+        referenceId: int('reference_id'),
+        oldValue: json('old_value').$type<JsonRecord>(),
+        newValue: json('new_value').$type<JsonRecord>(),
+        ipAddress: varchar('ip_address', { length: 64 }),
+        userAgent: varchar('user_agent', { length: 500 }),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+    },
+    (table) => [
+        index('activity_logs_user_idx').on(table.userId),
+        index('activity_logs_module_ref_idx').on(table.module, table.referenceId),
+    ]
+);
+
+export const notifications = mysqlTable(
+    'notifications',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        userId: int('user_id')
+            .notNull()
+            .references(() => users.id, { onDelete: 'cascade' }),
+        title: varchar('title', { length: 255 }).notNull(),
+        message: text('message'),
+        type: tinyint('type').notNull().default(0),
+        module: varchar('module', { length: 64 }),
+        referenceId: int('reference_id'),
+        isRead: tinyint('is_read').notNull().default(0),
+        readAt: timestamp('read_at'),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+    },
+    (table) => [
+        index('notifications_user_idx').on(table.userId),
+        index('notifications_unread_idx').on(table.userId, table.isRead),
+    ]
+);
+
+// ============================================================
+// HR — Klien (Field / Sales, Fase 9)
+// ============================================================
+
+export const clients = mysqlTable(
+    'clients',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        name: varchar('name', { length: 191 }).notNull(),
+        code: varchar('code', { length: 64 }),
+        contactPerson: varchar('contact_person', { length: 191 }),
+        phone: varchar('phone', { length: 32 }),
+        email: varchar('email', { length: 191 }),
+        address: text('address'),
+        latitude: decimal('latitude', { precision: 10, scale: 7 }),
+        longitude: decimal('longitude', { precision: 10, scale: 7 }),
+        category: tinyint('category'),
+        picEmployeeId: int('pic_employee_id').references(() => employees.id, {
+            onDelete: 'set null',
+        }),
+        notes: text('notes'),
+        status: tinyint('status').notNull().default(0),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => []
+);
+
+export const clientVisits = mysqlTable(
+    'client_visits',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        employeeId: int('employee_id')
+            .notNull()
+            .references(() => employees.id, { onDelete: 'cascade' }),
+        clientId: int('client_id')
+            .notNull()
+            .references(() => clients.id, { onDelete: 'restrict' }),
+        visitDate: date('visit_date', { mode: 'string' }).notNull(),
+        checkInAt: timestamp('check_in_at'),
+        checkOutAt: timestamp('check_out_at'),
+        latitude: decimal('latitude', { precision: 10, scale: 7 }),
+        longitude: decimal('longitude', { precision: 10, scale: 7 }),
+        address: text('address'),
+        photo: varchar('photo', { length: 500 }),
+        purpose: varchar('purpose', { length: 255 }),
+        notes: text('notes'),
+        status: tinyint('status').notNull().default(0),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [
+        index('client_visits_employee_idx').on(table.employeeId),
+        index('client_visits_client_idx').on(table.clientId),
+    ]
+);
+
+// ============================================================
+// HR — Pelacakan Lokasi (Fase 9)
+// ============================================================
+
+export const locationTracks = mysqlTable(
+    'location_tracks',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        employeeId: int('employee_id')
+            .notNull()
+            .references(() => employees.id, { onDelete: 'cascade' }),
+        latitude: decimal('latitude', { precision: 10, scale: 7 }).notNull(),
+        longitude: decimal('longitude', { precision: 10, scale: 7 }).notNull(),
+        accuracy: decimal('accuracy', { precision: 8, scale: 2 }),
+        address: text('address'),
+        batteryLevel: tinyint('battery_level'),
+        isMockLocation: tinyint('is_mock_location').default(0),
+        trackedAt: timestamp('tracked_at').notNull(),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+    },
+    (table) => [
+        index('location_tracks_employee_idx').on(table.employeeId),
+        index('location_tracks_tracked_at_idx').on(table.trackedAt),
+    ]
+);
+
+// ============================================================
+// HR — Kas Kecil (Petty Cash, Fase 8)
+// ============================================================
+
+export const companyBankAccounts = mysqlTable(
+    'company_bank_accounts',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        bankName: varchar('bank_name', { length: 100 }).notNull(),
+        accountNumber: varchar('account_number', { length: 64 }).notNull(),
+        accountHolder: varchar('account_holder', { length: 191 }).notNull(),
+        branch: varchar('branch', { length: 100 }),
+        isPrimary: tinyint('is_primary').notNull().default(0),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => []
+);
+
+export const pettyCash = mysqlTable(
+    'petty_cash',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        branchId: int('branch_id').references(() => branches.id, {
+            onDelete: 'set null',
+        }),
+        balance: decimal('balance', { precision: 15, scale: 2 }).notNull().default('0'),
+        holderEmployeeId: int('holder_employee_id').references(() => employees.id, {
+            onDelete: 'set null',
+        }),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => []
+);
+
+export const pettyCashTransactions = mysqlTable(
+    'petty_cash_transactions',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        pettyCashId: int('petty_cash_id')
+            .notNull()
+            .references(() => pettyCash.id, { onDelete: 'cascade' }),
+        transactionType: tinyint('transaction_type').notNull(),
+        category: tinyint('category').notNull(),
+        amount: decimal('amount', { precision: 15, scale: 2 }).notNull(),
+        description: text('description'),
+        attachment: varchar('attachment', { length: 500 }),
+        transactionDate: date('transaction_date', { mode: 'string' }).notNull(),
+        createdBy: int('created_by').references(() => users.id, {
+            onDelete: 'set null',
+        }),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [index('petty_cash_transactions_petty_cash_idx').on(table.pettyCashId)]
+);
+
+// ============================================================
+// HR — THR & Tunjangan Cuti (Fase 8)
+// ============================================================
+
+export const thrSettings = mysqlTable(
+    'thr_settings',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        calculationType: tinyint('calculation_type').notNull().default(0),
+        minWorkingMonths: int('min_working_months').default(1),
+        paymentBeforeHolidayDays: int('payment_before_holiday_days').default(7),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => []
+);
+
+export const thrDisbursements = mysqlTable(
+    'thr_disbursements',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        employeeId: int('employee_id')
+            .notNull()
+            .references(() => employees.id, { onDelete: 'cascade' }),
+        year: int('year').notNull(),
+        amount: decimal('amount', { precision: 15, scale: 2 }).notNull(),
+        religionHoliday: tinyint('religion_holiday').notNull(),
+        paidAt: timestamp('paid_at'),
+        status: tinyint('status').notNull().default(0),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [
+        uniqueIndex('thr_disbursements_unique').on(
+            table.employeeId,
+            table.year,
+            table.religionHoliday
+        ),
+    ]
+);
+
+export const leaveAllowanceSettings = mysqlTable(
+    'leave_allowance_settings',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        leaveTypeId: int('leave_type_id')
+            .notNull()
+            .references(() => leaveTypes.id, { onDelete: 'cascade' }),
+        amountPerDay: decimal('amount_per_day', { precision: 15, scale: 2 }).notNull(),
+        maxDaysPaid: int('max_days_paid'),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => []
+);
+
+// ============================================================
+// HR — Pesangon (Severance, Fase 8)
+// ============================================================
+
+export const severanceSettings = mysqlTable(
+    'severance_settings',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        severanceMultiplier: json('severance_multiplier').$type<JsonRecord>(),
+        serviceAwardMultiplier: json('service_award_multiplier').$type<JsonRecord>(),
+        compensationMultiplier: json('compensation_multiplier').$type<JsonRecord>(),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => []
+);
+
+export const severancePayments = mysqlTable(
+    'severance_payments',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        employeeId: int('employee_id')
+            .notNull()
+            .references(() => employees.id, { onDelete: 'cascade' }),
+        terminationDate: date('termination_date', { mode: 'string' }).notNull(),
+        terminationReason: tinyint('termination_reason').notNull(),
+        workingYears: decimal('working_years', { precision: 5, scale: 2 }),
+        severanceAmount: decimal('severance_amount', { precision: 15, scale: 2 }).default('0'),
+        serviceAwardAmount: decimal('service_award_amount', { precision: 15, scale: 2 }).default(
+            '0'
+        ),
+        compensationAmount: decimal('compensation_amount', { precision: 15, scale: 2 }).default(
+            '0'
+        ),
+        totalAmount: decimal('total_amount', { precision: 15, scale: 2 }).default('0'),
+        status: tinyint('status').notNull().default(0),
+        paidAt: timestamp('paid_at'),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [index('severance_payments_employee_idx').on(table.employeeId)]
+);
+
+// ============================================================
+// HR — Pajak & Bukti Potong (Coretax, Fase 8)
+// ============================================================
+
+export const employeeTaxProfiles = mysqlTable(
+    'employee_tax_profiles',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        employeeId: int('employee_id')
+            .notNull()
+            .references(() => employees.id, { onDelete: 'cascade' }),
+        year: int('year').notNull(),
+        npwp: varchar('npwp', { length: 32 }),
+        ptkpCode: tinyint('ptkp_code'),
+        taxStatus: tinyint('tax_status').notNull().default(0),
+        isNpwpHolder: tinyint('is_npwp_holder').notNull().default(1),
+        foreignCountryCode: varchar('foreign_country_code', { length: 8 }),
+        startPeriod: date('start_period', { mode: 'string' }),
+        endPeriod: date('end_period', { mode: 'string' }),
+        effectiveDate: date('effective_date', { mode: 'string' }),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [uniqueIndex('employee_tax_profiles_unique').on(table.employeeId, table.year)]
+);
+
+export const taxWithholdingSlips = mysqlTable(
+    'tax_withholding_slips',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        employeeId: int('employee_id')
+            .notNull()
+            .references(() => employees.id, { onDelete: 'cascade' }),
+        payrollPeriodId: int('payroll_period_id').references(() => payrollPeriods.id, {
+            onDelete: 'set null',
+        }),
+        slipType: tinyint('slip_type').notNull(),
+        documentNumber: varchar('document_number', { length: 100 }),
+        periodMonth: tinyint('period_month'),
+        periodYear: int('period_year').notNull(),
+        isAnnual: tinyint('is_annual').notNull().default(0),
+        grossIncome: decimal('gross_income', { precision: 15, scale: 2 }).default('0'),
+        ptkpAmount: decimal('ptkp_amount', { precision: 15, scale: 2 }).default('0'),
+        taxableIncome: decimal('taxable_income', { precision: 15, scale: 2 }).default('0'),
+        taxRate: decimal('tax_rate', { precision: 5, scale: 2 }).default('0'),
+        taxAmount: decimal('tax_amount', { precision: 15, scale: 2 }).default('0'),
+        ntpn: varchar('ntpn', { length: 64 }),
+        signerName: varchar('signer_name', { length: 191 }),
+        signerNik: varchar('signer_nik', { length: 32 }),
+        signerPosition: varchar('signer_position', { length: 191 }),
+        status: tinyint('status').notNull().default(0),
+        issuedAt: timestamp('issued_at'),
+        fileUrl: varchar('file_url', { length: 500 }),
+        notes: text('notes'),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [
+        index('tax_withholding_slips_employee_idx').on(table.employeeId),
+        uniqueIndex('tax_withholding_slips_document_number_unique').on(table.documentNumber),
+    ]
+);
+
+export const coretaxSubmissions = mysqlTable(
+    'coretax_submissions',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        periodMonth: tinyint('period_month'),
+        periodYear: int('period_year').notNull(),
+        submissionType: tinyint('submission_type').notNull(),
+        totalSlips: int('total_slips').default(0),
+        totalTaxAmount: decimal('total_tax_amount', { precision: 15, scale: 2 }).default('0'),
+        ntpnBatch: varchar('ntpn_batch', { length: 64 }),
+        fileUrl: varchar('file_url', { length: 500 }),
+        status: tinyint('status').notNull().default(0),
+        submittedAt: timestamp('submitted_at'),
+        acceptedAt: timestamp('accepted_at'),
+        rejectionReason: text('rejection_reason'),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => []
+);
+
+// ============================================================
+// HR — Laporan (Report Templates & Logs, Fase 7)
+// ============================================================
+
+export const reportTemplates = mysqlTable(
+    'report_templates',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        name: varchar('name', { length: 191 }).notNull(),
+        module: tinyint('module').notNull(),
+        config: json('config').$type<JsonRecord>(),
+        createdBy: int('created_by').references(() => users.id, {
+            onDelete: 'set null',
+        }),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => []
+);
+
+export const reportLogs = mysqlTable(
+    'report_logs',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        reportTemplateId: int('report_template_id').references(() => reportTemplates.id, {
+            onDelete: 'set null',
+        }),
+        employeeId: int('employee_id').references(() => employees.id, {
+            onDelete: 'set null',
+        }),
+        params: json('params').$type<JsonRecord>(),
+        fileUrl: varchar('file_url', { length: 500 }),
+        format: tinyint('format').notNull().default(0),
+        generatedAt: timestamp('generated_at').defaultNow().notNull(),
+    },
+    (table) => [index('report_logs_template_idx').on(table.reportTemplateId)]
+);

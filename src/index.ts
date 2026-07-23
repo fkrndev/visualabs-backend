@@ -41,6 +41,37 @@ import clientAppRoutes from "./routes/clientApp";
 import advertiserContentRoutes from "./routes/advertiserContent";
 import uploadRoutes from "./routes/uploads";
 import { clientVideoRoutes, adminVideoRoutes } from "./routes/videoRequest";
+import llmGatewayRoutes from "./routes/llmGateway";
+import relayRoutes from "./routes/relay";
+// HR modules (Fase 1–3: organisasi, karyawan, presensi, cuti)
+import hrBranchRoutes from "./routes/hr/branches";
+import hrDepartmentRoutes from "./routes/hr/departments";
+import hrPositionRoutes from "./routes/hr/positions";
+import hrEmployeeRoutes from "./routes/hr/employees";
+import hrEmployeeRelationRoutes from "./routes/hr/employeeRelations";
+import hrWorkScheduleRoutes from "./routes/hr/workSchedules";
+import hrEmployeeScheduleRoutes from "./routes/hr/employeeSchedules";
+import hrHolidayRoutes from "./routes/hr/holidays";
+import hrAttendanceRoutes from "./routes/hr/attendances";
+import hrLeaveRoutes from "./routes/hr/leaves";
+import hrApprovalWorkflowRoutes from "./routes/hr/approvalWorkflows";
+import hrPayrollRoutes from "./routes/hr/payrolls";
+import hrCompensationRoutes from "./routes/hr/compensation";
+import hrMeRoutes from "./routes/hr/me";
+import hrAnnouncementRoutes from "./routes/hr/announcements";
+import hrActivityLogRoutes from "./routes/hr/activityLogs";
+import hrClientRoutes from "./routes/hr/clients";
+import hrClientVisitRoutes from "./routes/hr/clientVisits";
+import hrLocationTrackRoutes from "./routes/hr/locationTracks";
+import hrCompanyBankRoutes from "./routes/hr/companyBankAccounts";
+import hrPettyCashRoutes from "./routes/hr/pettyCash";
+import hrThrRoutes from "./routes/hr/thr";
+import hrSeveranceRoutes from "./routes/hr/severance";
+import hrEmployeeTaxProfileRoutes from "./routes/hr/employeeTaxProfiles";
+import hrTaxSlipRoutes from "./routes/hr/taxSlips";
+import hrCoretaxRoutes from "./routes/hr/coretax";
+import hrReportRoutes from "./routes/hr/reports";
+import { websocket } from "./lib/relayWs";
 import openApiSpec from "./openapi/spec";
 import { role } from "./utils/auth/role";
 // import { readFileSync } from "fs";
@@ -129,6 +160,47 @@ app.route("/advertiser", advertiserContentRoutes);
 app.route("/uploads", uploadRoutes);
 app.route("/video-requests", adminVideoRoutes);
 
+// HR modules (Fase 1–3) — organisasi, karyawan, presensi, cuti
+app.route("/branches", hrBranchRoutes);
+app.route("/departments", hrDepartmentRoutes);
+app.route("/positions", hrPositionRoutes);
+app.route("/employees", hrEmployeeRoutes);
+app.route("/employees", hrEmployeeRelationRoutes);
+app.route("/work-schedules", hrWorkScheduleRoutes);
+app.route("/employee-schedules", hrEmployeeScheduleRoutes);
+app.route("/holidays", hrHolidayRoutes);
+app.route("/attendances", hrAttendanceRoutes);
+app.route("/leaves", hrLeaveRoutes);
+app.route("/approval-workflows", hrApprovalWorkflowRoutes);
+app.route("/payrolls", hrPayrollRoutes);
+// compensation di-mount root: /salary-structures, /allowances, /employee-allowances
+app.route("/", hrCompensationRoutes);
+// Portal ESS (self-service karyawan)
+app.route("/me", hrMeRoutes);
+// Fase 7 — pendukung: pengumuman + audit log
+app.route("/announcements", hrAnnouncementRoutes);
+app.route("/activity-logs", hrActivityLogRoutes);
+// Fase 9 — field/sales
+app.route("/clients", hrClientRoutes);
+app.route("/client-visits", hrClientVisitRoutes);
+app.route("/location-tracks", hrLocationTrackRoutes);
+// Fase 8 — keuangan (rekening perusahaan + petty cash)
+app.route("/company-bank-accounts", hrCompanyBankRoutes);
+app.route("/petty-cash", hrPettyCashRoutes);
+// Fase 8 lanjut — THR, pesangon, pajak, coretax, laporan
+app.route("/thr", hrThrRoutes);
+app.route("/severance", hrSeveranceRoutes);
+app.route("/employee-tax-profiles", hrEmployeeTaxProfileRoutes);
+app.route("/tax-slips", hrTaxSlipRoutes);
+app.route("/coretax", hrCoretaxRoutes);
+app.route("/reports", hrReportRoutes);
+
+// LLM Gateway (DeepSeek) — request LLM terpusat, key asli hanya di server ini
+app.route("/llm", llmGatewayRoutes);
+
+// Relay Hub — jembatan browser ⇄ node Hermes (node tetap client, dial keluar)
+app.route("/relay", relayRoutes);
+
 app.notFound((c) => {
   return c.json(
     {
@@ -173,4 +245,5 @@ export { app };
 export default {
   port,
   fetch: app.fetch,
+  websocket,
 };
