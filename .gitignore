@@ -14,6 +14,11 @@ node_temp/
 *.sqlite
 *.sqlite3
 *.sql
+# ...tapi migrasi Drizzle WAJIB ikut ke repo (kalau tidak, deploy tidak bawa skema baru)
+!drizzle/**/*.sql
+
+# Service account / credential files (Google Drive dll) — jangan pernah di-commit
+secrets/
 
 # Build output
 /dist
