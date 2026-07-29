@@ -1,3 +1,6 @@
+import { db } from "../db/client";
+import { fbAct } from "../db/schema";
+
 const META_API_BASE = "https://graph.facebook.com/v20.0";
 
 const INSIGHT_FIELDS = [
@@ -57,16 +60,117 @@ async function metaFetch(path: string, params: Record<string, string>, token: st
 
 export type TimeRange = { since: string; until: string };
 
+// ── Konversi CPAS / Collaborative Ads ────────────────────────────────────────
+// Untuk akun katalog bersama, konversi TIDAK muncul di `actions` — Meta menaruh
+// purchase/add_to_cart/view_content di laci terpisah `catalog_segment_*`
+// (kolom "…for shared items only" di Ads Manager). Akun begini ditandai satu per
+// satu lewat `fb_act.data_json.conversion_source = "catalog_segment"`; akun lain
+// sama sekali tidak berubah perilakunya.
+const CATALOG_SEGMENT_FIELDS = "catalog_segment_actions,catalog_segment_value";
+
+type ActionRow = { action_type: string; value: string };
+
+function parseDataJson(v: unknown): any {
+  if (typeof v !== "string") return v ?? null;
+  try {
+    return JSON.parse(v);
+  } catch {
+    return null;
+  }
+}
+
+let catalogActsCache: { ids: Set<string>; expiry: number } | null = null;
+
+/** Set act id (tanpa prefix `act_`) yang dikonfigurasi memakai catalog segment. */
+async function catalogSegmentActIds(): Promise<Set<string>> {
+  if (catalogActsCache && catalogActsCache.expiry > Date.now()) return catalogActsCache.ids;
+
+  const ids = new Set<string>();
+  try {
+    const rows = await db.select({ actId: fbAct.actId, dataJson: fbAct.dataJson }).from(fbAct);
+    for (const r of rows) {
+      if (parseDataJson(r.dataJson)?.conversion_source === "catalog_segment") {
+        ids.add(r.actId.replace(/^act_/, ""));
+      }
+    }
+  } catch (error) {
+    // Config tak terbaca jangan sampai menjatuhkan insight — perlakukan sebagai
+    // "tidak ada akun CPAS", persis perilaku sebelum fitur ini ada.
+    console.error("[metaApi] gagal membaca config conversion_source", error);
+  }
+
+  catalogActsCache = { ids, expiry: Date.now() + 60_000 };
+  return ids;
+}
+
+/** Dipanggil setelah staff menyimpan konfigurasi akun supaya tidak perlu tunggu TTL. */
+export function invalidateInsightConfigCache() {
+  catalogActsCache = null;
+}
+
+function mergeActions(
+  base: ActionRow[] | undefined,
+  extra: ActionRow[] | undefined,
+): ActionRow[] | undefined {
+  if (!extra?.length) return base;
+  const out = new Map<string, ActionRow>();
+  for (const a of base ?? []) out.set(a.action_type, a);
+  for (const a of extra) out.set(a.action_type, a);
+  return Array.from(out.values());
+}
+
+/**
+ * Tulis ulang baris insight: nilai catalog segment ditimpakan ke `actions` /
+ * `action_values` supaya SEMUA consumer (dashboard staff, app client, tabel
+ * campaign/ad, demografi) membaca angka yang sama dengan Ads Manager tanpa perlu
+ * tahu soal CPAS.
+ */
+function applyCatalogSegment<T>(payload: T): T {
+  const rows = (payload as any)?.data;
+  if (!Array.isArray(rows)) return payload;
+
+  for (const row of rows) {
+    const acts = row?.catalog_segment_actions as ActionRow[] | undefined;
+    const vals = row?.catalog_segment_value as ActionRow[] | undefined;
+    if (!acts?.length && !vals?.length) continue;
+
+    row.actions = mergeActions(row.actions, acts);
+    row.action_values = mergeActions(row.action_values, vals);
+
+    // Meta tidak mengirim cost-per untuk catalog segment; turunkan dari spend
+    // supaya kartu `costs_per_*` ikut benar dan bukan nol.
+    const spend = Number(row.spend ?? 0);
+    if (spend > 0 && acts?.length) {
+      const derived = acts
+        .filter((a) => Number(a.value) > 0)
+        .map((a) => ({ action_type: a.action_type, value: String(spend / Number(a.value)) }));
+      row.cost_per_action_type = mergeActions(row.cost_per_action_type, derived);
+    }
+
+    delete row.catalog_segment_actions;
+    delete row.catalog_segment_value;
+  }
+  return payload;
+}
+
+const fieldsFor = (useCatalog: boolean) =>
+  useCatalog ? `${INSIGHT_FIELDS},${CATALOG_SEGMENT_FIELDS}` : INSIGHT_FIELDS;
+
+/** Suffix cache — hasil untuk akun CPAS sudah ter-merge, jadi tak boleh tertukar. */
+const catSuffix = (useCatalog: boolean) => (useCatalog ? "-cat" : "");
+
 // Aggregate insights for a date range
 export async function fetchInsights(actId: string, token: string, timeRange: TimeRange) {
-  const key = `insights-${actId}-${timeRange.since}-${timeRange.until}`;
+  const cat = (await catalogSegmentActIds()).has(actId);
+  const key = `insights-${actId}-${timeRange.since}-${timeRange.until}${catSuffix(cat)}`;
   const cached = getCache(key);
   if (cached) return cached;
 
-  const data = await metaFetch(`act_${actId}/insights`, {
-    fields: INSIGHT_FIELDS,
+  const raw = await metaFetch(`act_${actId}/insights`, {
+    fields: fieldsFor(cat),
     time_range: JSON.stringify(timeRange),
   }, token);
+  const data = cat ? applyCatalogSegment(raw) : raw;
 
   setCache(key, data);
   return data;
@@ -74,15 +178,17 @@ export async function fetchInsights(actId: string, token: string, timeRange: Tim
 
 // Per-day breakdown (time_increment=1)
 export async function fetchInsightsPerDay(actId: string, token: string, timeRange: TimeRange) {
-  const key = `insights-perday-${actId}-${timeRange.since}-${timeRange.until}`;
+  const cat = (await catalogSegmentActIds()).has(actId);
+  const key = `insights-perday-${actId}-${timeRange.since}-${timeRange.until}${catSuffix(cat)}`;
   const cached = getCache(key);
   if (cached) return cached;
 
-  const data = await metaFetch(`act_${actId}/insights`, {
-    fields: INSIGHT_FIELDS,
+  const raw = await metaFetch(`act_${actId}/insights`, {
+    fields: fieldsFor(cat),
     time_range: JSON.stringify(timeRange),
     time_increment: "1",
   }, token);
+  const data = cat ? applyCatalogSegment(raw) : raw;
 
   setCache(key, data);
   return data;
@@ -90,16 +196,18 @@ export async function fetchInsightsPerDay(actId: string, token: string, timeRang
 
 // Campaign-level insights
 export async function fetchInsightsByCampaign(actId: string, token: string, timeRange: TimeRange) {
-  const key = `insights-campaign-${actId}-${timeRange.since}-${timeRange.until}`;
+  const cat = (await catalogSegmentActIds()).has(actId);
+  const key = `insights-campaign-${actId}-${timeRange.since}-${timeRange.until}${catSuffix(cat)}`;
   const cached = getCache(key);
   if (cached) return cached;
 
-  const data = await metaFetch(`act_${actId}/insights`, {
-    fields: INSIGHT_FIELDS,
+  const raw = await metaFetch(`act_${actId}/insights`, {
+    fields: fieldsFor(cat),
     time_range: JSON.stringify(timeRange),
     level: "campaign",
     sort: "reach_descending",
   }, token);
+  const data = cat ? applyCatalogSegment(raw) : raw;
 
   setCache(key, data);
   return data;
@@ -107,7 +215,8 @@ export async function fetchInsightsByCampaign(actId: string, token: string, time
 
 // Ad-level insights with cursor pagination
 export async function fetchInsightsByAd(actId: string, token: string, timeRange: TimeRange) {
-  const key = `insights-ad-${actId}-${timeRange.since}-${timeRange.until}`;
+  const cat = (await catalogSegmentActIds()).has(actId);
+  const key = `insights-ad-${actId}-${timeRange.since}-${timeRange.until}${catSuffix(cat)}`;
   const cached = getCache(key);
   if (cached) return cached;
 
@@ -117,7 +226,7 @@ export async function fetchInsightsByAd(actId: string, token: string, timeRange:
 
   while (iterations < 10) {
     const params: Record<string, string> = {
-      fields: INSIGHT_FIELDS,
+      fields: fieldsFor(cat),
       time_range: JSON.stringify(timeRange),
       level: "ad",
       sort: "clicks_descending",
@@ -133,6 +242,7 @@ export async function fetchInsightsByAd(actId: string, token: string, timeRange:
   }
 
   const result = { data: allData };
+  if (cat) applyCatalogSegment(result);
   setCache(key, result);
   return result;
 }
@@ -144,15 +254,17 @@ export async function fetchInsightsByBreakdown(
   timeRange: TimeRange,
   breakdown: "age" | "gender" | "impression_device"
 ) {
-  const key = `insights-${breakdown}-${actId}-${timeRange.since}-${timeRange.until}`;
+  const cat = (await catalogSegmentActIds()).has(actId);
+  const key = `insights-${breakdown}-${actId}-${timeRange.since}-${timeRange.until}${catSuffix(cat)}`;
   const cached = getCache(key);
   if (cached) return cached;
 
-  const data = await metaFetch(`act_${actId}/insights`, {
-    fields: INSIGHT_FIELDS,
+  const raw = await metaFetch(`act_${actId}/insights`, {
+    fields: fieldsFor(cat),
     time_range: JSON.stringify(timeRange),
     breakdowns: breakdown,
   }, token);
+  const data = cat ? applyCatalogSegment(raw) : raw;
 
   setCache(key, data);
   return data;
