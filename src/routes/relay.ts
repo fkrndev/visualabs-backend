@@ -34,8 +34,8 @@ function nodeTokenValid(nodeId: string, token: string): boolean {
 }
 
 // ── Daftar node online (buat dropdown "pilih Hermes server" di FE) ──────────
-router.get("/nodes", requireAuthWithFallback, (c) => {
-    return c.json({ success: true, data: hub.listNodes() });
+router.get("/nodes", requireAuthWithFallback, async (c) => {
+    return c.json({ success: true, data: await hub.listNodes() });
 });
 
 // ── Node-agent connect keluar ke sini ──────────────────────────────────────
@@ -130,5 +130,221 @@ router.get(
         };
     }),
 );
+
+// ── MCP proxy: list servers & trigger auth on a node ────────────────────────
+router.get("/mcp/:nodeId/servers", requireAuthWithFallback, async (c) => {
+    const nodeId = c.req.param("nodeId");
+    if (!hub.hasNode(nodeId)) return c.json({ error: "node offline" }, 503);
+    try {
+        const resp = await hub.sendMcpRequest(nodeId, "GET", "/api/mcp/servers");
+        return c.json(resp.data, resp.status as any);
+    } catch (err) {
+        return c.json({ error: (err as Error).message }, 502);
+    }
+});
+
+router.post("/mcp/:nodeId/servers/:name/auth", requireAuthWithFallback, async (c) => {
+    const nodeId = c.req.param("nodeId");
+    const serverName = c.req.param("name");
+    if (!hub.hasNode(nodeId)) return c.json({ error: "node offline" }, 503);
+    try {
+        const body = await c.req.json().catch(() => ({}));
+        const resp = await hub.sendMcpRequest(
+            nodeId,
+            "POST",
+            `/api/mcp/servers/${encodeURIComponent(serverName)}/auth`,
+            body,
+        );
+        return c.json(resp.data, resp.status as any);
+    } catch (err) {
+        return c.json({ error: (err as Error).message }, 502);
+    }
+});
+
+// ── MCP server test (connect, list tools, disconnect) ──────────────────────
+router.post("/mcp/:nodeId/servers/:name/test", requireAuthWithFallback, async (c) => {
+    const nodeId = c.req.param("nodeId");
+    const serverName = c.req.param("name");
+    if (!hub.hasNode(nodeId)) return c.json({ error: "node offline" }, 503);
+    try {
+        const resp = await hub.sendMcpRequest(
+            nodeId,
+            "POST",
+            `/api/mcp/servers/${encodeURIComponent(serverName)}/test`,
+        );
+        return c.json(resp.data, resp.status as any);
+    } catch (err) {
+        return c.json({ error: (err as Error).message }, 502);
+    }
+});
+
+// ── MCP server create (add new server to node) ─────────────────────────────
+router.post("/mcp/:nodeId/servers", requireAuthWithFallback, async (c) => {
+    const nodeId = c.req.param("nodeId");
+    if (!hub.hasNode(nodeId)) return c.json({ error: "node offline" }, 503);
+    try {
+        const body = await c.req.json();
+        const resp = await hub.sendMcpRequest(
+            nodeId,
+            "POST",
+            "/api/mcp/servers",
+            body,
+        );
+        return c.json(resp.data, resp.status as any);
+    } catch (err) {
+        return c.json({ error: (err as Error).message }, 502);
+    }
+});
+
+// ── MCP server delete (remove server from node) ────────────────────────────
+router.delete("/mcp/:nodeId/servers/:name", requireAuthWithFallback, async (c) => {
+    const nodeId = c.req.param("nodeId");
+    const serverName = c.req.param("name");
+    if (!hub.hasNode(nodeId)) return c.json({ error: "node offline" }, 503);
+    try {
+        const resp = await hub.sendMcpRequest(
+            nodeId,
+            "DELETE",
+            `/api/mcp/servers/${encodeURIComponent(serverName)}`,
+        );
+        return c.json(resp.data, resp.status as any);
+    } catch (err) {
+        return c.json({ error: (err as Error).message }, 502);
+    }
+});
+
+// ── Canva token check (check mcp-remote token without spawning process) ─────
+router.get("/mcp/:nodeId/canva-token-check", requireAuthWithFallback, async (c) => {
+    const nodeId = c.req.param("nodeId");
+    if (!hub.hasNode(nodeId)) return c.json({ error: "node offline" }, 503);
+    try {
+        const resp = await hub.sendMcpRequest(
+            nodeId,
+            "GET",
+            "/api/mcp/canva-token-check",
+        );
+        return c.json(resp.data, resp.status as any);
+    } catch (err) {
+        return c.json({ error: (err as Error).message }, 502);
+    }
+});
+
+// ── Skills proxy: list, toggle, create, content, hub search/install/uninstall ──
+router.get("/skills/:nodeId", requireAuthWithFallback, async (c) => {
+    const nodeId = c.req.param("nodeId");
+    if (!hub.hasNode(nodeId)) return c.json({ error: "node offline" }, 503);
+    try {
+        const resp = await hub.sendMcpRequest(nodeId, "GET", "/api/skills");
+        return c.json(resp.data, resp.status as any);
+    } catch (err) {
+        return c.json({ error: (err as Error).message }, 502);
+    }
+});
+
+router.put("/skills/:nodeId/toggle", requireAuthWithFallback, async (c) => {
+    const nodeId = c.req.param("nodeId");
+    if (!hub.hasNode(nodeId)) return c.json({ error: "node offline" }, 503);
+    try {
+        const body = await c.req.json().catch(() => ({}));
+        const resp = await hub.sendMcpRequest(nodeId, "PUT", "/api/skills/toggle", body);
+        return c.json(resp.data, resp.status as any);
+    } catch (err) {
+        return c.json({ error: (err as Error).message }, 502);
+    }
+});
+
+router.get("/skills/:nodeId/content", requireAuthWithFallback, async (c) => {
+    const nodeId = c.req.param("nodeId");
+    if (!hub.hasNode(nodeId)) return c.json({ error: "node offline" }, 503);
+    const name = c.req.query("name") ?? "";
+    try {
+        const resp = await hub.sendMcpRequest(nodeId, "GET", `/api/skills/content?name=${encodeURIComponent(name)}`);
+        return c.json(resp.data, resp.status as any);
+    } catch (err) {
+        return c.json({ error: (err as Error).message }, 502);
+    }
+});
+
+router.post("/skills/:nodeId", requireAuthWithFallback, async (c) => {
+    const nodeId = c.req.param("nodeId");
+    if (!hub.hasNode(nodeId)) return c.json({ error: "node offline" }, 503);
+    try {
+        const body = await c.req.json().catch(() => ({}));
+        const resp = await hub.sendMcpRequest(nodeId, "POST", "/api/skills", body);
+        return c.json(resp.data, resp.status as any);
+    } catch (err) {
+        return c.json({ error: (err as Error).message }, 502);
+    }
+});
+
+router.put("/skills/:nodeId/content", requireAuthWithFallback, async (c) => {
+    const nodeId = c.req.param("nodeId");
+    if (!hub.hasNode(nodeId)) return c.json({ error: "node offline" }, 503);
+    try {
+        const body = await c.req.json().catch(() => ({}));
+        const resp = await hub.sendMcpRequest(nodeId, "PUT", "/api/skills/content", body);
+        return c.json(resp.data, resp.status as any);
+    } catch (err) {
+        return c.json({ error: (err as Error).message }, 502);
+    }
+});
+
+router.get("/skills/:nodeId/hub/search", requireAuthWithFallback, async (c) => {
+    const nodeId = c.req.param("nodeId");
+    if (!hub.hasNode(nodeId)) return c.json({ error: "node offline" }, 503);
+    const q = c.req.query("q") ?? "";
+    const source = c.req.query("source") ?? "all";
+    const limit = c.req.query("limit") ?? "20";
+    try {
+        const resp = await hub.sendMcpRequest(
+            nodeId,
+            "GET",
+            `/api/skills/hub/search?q=${encodeURIComponent(q)}&source=${encodeURIComponent(source)}&limit=${limit}`,
+        );
+        return c.json(resp.data, resp.status as any);
+    } catch (err) {
+        return c.json({ error: (err as Error).message }, 502);
+    }
+});
+
+router.post("/skills/:nodeId/hub/install", requireAuthWithFallback, async (c) => {
+    const nodeId = c.req.param("nodeId");
+    if (!hub.hasNode(nodeId)) return c.json({ error: "node offline" }, 503);
+    try {
+        const body = await c.req.json().catch(() => ({}));
+        const resp = await hub.sendMcpRequest(nodeId, "POST", "/api/skills/hub/install", body);
+        return c.json(resp.data, resp.status as any);
+    } catch (err) {
+        return c.json({ error: (err as Error).message }, 502);
+    }
+});
+
+router.post("/skills/:nodeId/hub/uninstall", requireAuthWithFallback, async (c) => {
+    const nodeId = c.req.param("nodeId");
+    if (!hub.hasNode(nodeId)) return c.json({ error: "node offline" }, 503);
+    try {
+        const body = await c.req.json().catch(() => ({}));
+        const resp = await hub.sendMcpRequest(nodeId, "POST", "/api/skills/hub/uninstall", body);
+        return c.json(resp.data, resp.status as any);
+    } catch (err) {
+        return c.json({ error: (err as Error).message }, 502);
+    }
+});
+
+router.get("/skills/:nodeId/hub/preview", requireAuthWithFallback, async (c) => {
+    const nodeId = c.req.param("nodeId");
+    if (!hub.hasNode(nodeId)) return c.json({ error: "node offline" }, 503);
+    const identifier = c.req.query("identifier") ?? "";
+    try {
+        const resp = await hub.sendMcpRequest(
+            nodeId,
+            "GET",
+            `/api/skills/hub/preview?identifier=${encodeURIComponent(identifier)}`,
+        );
+        return c.json(resp.data, resp.status as any);
+    } catch (err) {
+        return c.json({ error: (err as Error).message }, 502);
+    }
+});
 
 export default router;
