@@ -13,6 +13,10 @@
  * client ⇄ relay: frame tui_gateway JSON-RPC mentah (persis /api/ws).
  */
 
+import { db } from "../db/client";
+import { users, profiles } from "../db/schema";
+import { inArray, eq } from "drizzle-orm";
+
 export type NodeSummary = { id: string; label: string; online: boolean; sessions: number };
 
 export interface ClientHandle {
@@ -29,8 +33,16 @@ export interface NodeHandle {
     lastSeen: number;
 }
 
+type PendingMcp = {
+    resolve: (resp: { status: number; data: unknown }) => void;
+    reject: (err: Error) => void;
+    timer: ReturnType<typeof setTimeout>;
+};
+
 class RelayHub {
     private nodes = new Map<string, NodeHandle>();
+    private pendingMcp = new Map<string, PendingMcp>();
+    private mcpReqCounter = 0;
 
     registerNode(node: NodeHandle): void {
         // Node id yang sama connect ulang → tutup channel lama dulu.
@@ -56,13 +68,38 @@ class RelayHub {
         this.nodes.delete(node.nodeId);
     }
 
-    listNodes(): NodeSummary[] {
-        return [...this.nodes.values()].map((n) => ({
-            id: n.nodeId,
-            label: n.label,
-            online: true,
-            sessions: n.channels.size,
-        }));
+    async listNodes(): Promise<NodeSummary[]> {
+        const nodes = [...this.nodes.values()];
+        // Resolve user names from DB for node IDs matching "node-{userId}"
+        const userIds = nodes
+            .map((n) => n.nodeId.match(/^node-(\d+)$/)?.[1])
+            .filter((id): id is string => !!id)
+            .map(Number);
+
+        let nameMap = new Map<number, string>();
+        if (userIds.length) {
+            const rows = await db
+                .select({ id: users.id, name: profiles.name, username: users.username })
+                .from(users)
+                .leftJoin(profiles, eq(profiles.userId, users.id))
+                .where(inArray(users.id, userIds));
+            for (const r of rows) {
+                const label = r.name || r.username || `User ${r.id}`;
+                nameMap.set(r.id, label);
+            }
+        }
+
+        return nodes.map((n) => {
+            const match = n.nodeId.match(/^node-(\d+)$/);
+            const userId = match ? Number(match[1]) : null;
+            const userName = userId ? nameMap.get(userId) : undefined;
+            return {
+                id: n.nodeId,
+                label: userName || n.label,
+                online: true,
+                sessions: n.channels.size,
+            };
+        });
     }
 
     hasNode(nodeId: string): boolean {
@@ -92,13 +129,36 @@ class RelayHub {
         if (node.channels.delete(ch)) node.send(JSON.stringify({ t: "c", ch }));
     }
 
+    /** Kirim MCP query ke node (HTTP proxy ke Hermes lokal). */
+    sendMcpRequest(
+        nodeId: string,
+        method: string,
+        path: string,
+        body?: unknown,
+    ): Promise<{ status: number; data: unknown }> {
+        const node = this.nodes.get(nodeId);
+        if (!node) return Promise.reject(new Error("node offline"));
+
+        const reqId = `mcp-${++this.mcpReqCounter}`;
+        return new Promise((resolve, reject) => {
+            const timeoutMs = path.includes("/test") ? 120_000 : 30_000;
+            const timer = setTimeout(() => {
+                this.pendingMcp.delete(reqId);
+                reject(new Error(`MCP request timeout (${timeoutMs / 1000}s)`));
+            }, timeoutMs);
+
+            this.pendingMcp.set(reqId, { resolve, reject, timer });
+            node.send(JSON.stringify({ t: "mcp_req", reqId, method, path, body: body ?? null }));
+        });
+    }
+
     /** Pesan dari node → relay: teruskan frame ke client pemilik channel. */
     onNodeMessage(nodeId: string, raw: string): void {
         const node = this.nodes.get(nodeId);
         if (!node) return;
         node.lastSeen = Date.now();
 
-        let m: { t?: string; ch?: string; d?: unknown };
+        let m: { t?: string; ch?: string; d?: unknown; reqId?: string; status?: number; data?: unknown };
         try {
             m = JSON.parse(raw);
         } catch {
@@ -118,6 +178,13 @@ class RelayHub {
                 }
             }
             node.channels.delete(m.ch);
+        } else if (m.t === "mcp_resp" && typeof m.reqId === "string") {
+            const pending = this.pendingMcp.get(m.reqId);
+            if (pending) {
+                clearTimeout(pending.timer);
+                this.pendingMcp.delete(m.reqId);
+                pending.resolve({ status: m.status ?? 200, data: m.data });
+            }
         }
         // {t:"ready"} / ping lain → diabaikan
     }

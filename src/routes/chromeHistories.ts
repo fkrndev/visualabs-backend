@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { zValidator } from '@hono/zod-validator';
 import { SQL, and, asc, desc, eq, like, sql } from 'drizzle-orm';
+import { verify } from 'hono/jwt';
 
 import { db } from '../db/client';
 import { chromeHistories, chromeProfiles, chromeVisitEvents, users, customers } from '../db/schema';
@@ -12,7 +13,7 @@ import {
   sortsQuerySchema,
   type ColumnMap,
 } from '../utils/queryFilters';
-import { requireAuth, requireManagement } from '../middleware/auth';
+import { requireAuth, requireManagement, JWT_SECRET } from '../middleware/auth';
 
 const router = new Hono();
 
@@ -49,29 +50,19 @@ const trackPayload = z.object({
 router.post('/track', zValidator('json', trackPayload), async (c) => {
   const { browserUuid, url, title, durationMs } = c.req.valid('json');
 
-  // Validate token dari extension (X-Extension-Token header)
-  const extensionToken = c.req.header('X-Extension-Token');
+  // Validate token dari extension (Authorization: Bearer header)
+  const authHeader = c.req.header('Authorization');
   
-  if (!extensionToken) {
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return c.json({ success: false, message: 'Unauthorized - no token' }, 401);
   }
 
-  // Verify JWT token
-  let tokenValid = false;
-  try {
-    const parts = extensionToken.split('.');
-    if (parts.length === 3) {
-      const decoded = JSON.parse(atob(parts[1]));
-      // Simple expiry check
-      if (decoded.exp && decoded.exp * 1000 > Date.now()) {
-        tokenValid = true;
-      }
-    }
-  } catch {
-    tokenValid = false;
-  }
+  const token = authHeader.substring(7); // Remove 'Bearer ' prefix
 
-  if (!tokenValid) {
+  // Verify JWT token using hono/jwt
+  try {
+    await verify(token, JWT_SECRET);
+  } catch {
     return c.json({ success: false, message: 'Token expired or invalid' }, 401);
   }
 

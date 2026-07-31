@@ -173,6 +173,11 @@ app.route("/attendances", hrAttendanceRoutes);
 app.route("/leaves", hrLeaveRoutes);
 app.route("/approval-workflows", hrApprovalWorkflowRoutes);
 app.route("/payrolls", hrPayrollRoutes);
+
+// Relay Hub — jembatan browser ⇄ node Hermes (node tetap client, dial keluar)
+// Harus didaftarkan SEBELUM route yang punya JWT middleware global (compensation di "/")
+app.route("/relay", relayRoutes);
+
 // compensation di-mount root: /salary-structures, /allowances, /employee-allowances
 app.route("/", hrCompensationRoutes);
 // Portal ESS (self-service karyawan)
@@ -197,9 +202,6 @@ app.route("/reports", hrReportRoutes);
 
 // LLM Gateway (DeepSeek) — request LLM terpusat, key asli hanya di server ini
 app.route("/llm", llmGatewayRoutes);
-
-// Relay Hub — jembatan browser ⇄ node Hermes (node tetap client, dial keluar)
-app.route("/relay", relayRoutes);
 
 app.notFound((c) => {
   return c.json(
