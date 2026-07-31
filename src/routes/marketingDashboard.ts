@@ -11,6 +11,7 @@ import {
   fetchInsightsByAd,
   fetchInsightsByBreakdown,
   fetchAdPreview,
+  invalidateInsightConfigCache,
   type TimeRange,
 } from "../services/metaApi";
 import { requireAuth } from "../middleware/auth";
@@ -257,6 +258,9 @@ router.put("/config", zValidator("json", configPayload), async (c) => {
       : (act.dataJson ?? {});
     const merged = { ...(existing as object), ...dataJson };
     await db.update(fbAct).set({ dataJson: merged }).where(eq(fbAct.id, fbActId));
+    // `conversion_source` ikut disimpan di sini — cache-nya di metaApi harus
+    // dibuang supaya perubahan langsung terasa, bukan menunggu TTL 60 detik.
+    invalidateInsightConfigCache();
 
     return c.json({ success: true, message: "Konfigurasi disimpan" });
   } catch (error: any) {

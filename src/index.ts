@@ -41,6 +41,7 @@ import clientAppRoutes from "./routes/clientApp";
 import advertiserContentRoutes from "./routes/advertiserContent";
 import uploadRoutes from "./routes/uploads";
 import { clientVideoRoutes, adminVideoRoutes } from "./routes/videoRequest";
+import { driveFolderRoutes } from "./routes/driveFolders";
 import llmGatewayRoutes from "./routes/llmGateway";
 import relayRoutes from "./routes/relay";
 // HR modules (Fase 1–3: organisasi, karyawan, presensi, cuti)
@@ -138,6 +139,13 @@ app.route("/settings", settingsRoutes);
 app.route("/products", productRoutes);
 app.route("/subscriptions", subscriptionRoutes);
 app.route("/chrome-profiles", chromeProfileRoutes);
+// LLM Gateway + Relay — WAJIB di-mount SEBELUM route "/" ber-middleware-wildcard.
+// hrCompensationRoutes memakai use("*", requireAuth, requirePayroll) yang, karena
+// di-mount di "/", bocor ke route yang didaftarkan setelahnya. Mount di sini agar
+// /api/llm/* dan /api/relay/* tidak ikut ter-gate auth/payroll.
+app.route("/llm", llmGatewayRoutes);
+app.route("/relay", relayRoutes);
+
 app.route("/", profileLockRoutes);
 app.route("/chrome-histories", chromeHistoryRoutes);
 app.route("/ticket-issues", ticketIssueRoutes);
@@ -158,6 +166,7 @@ app.route("/client", clientAppRoutes);
 app.route("/client", clientVideoRoutes);
 app.route("/advertiser", advertiserContentRoutes);
 app.route("/uploads", uploadRoutes);
+app.route("/drive-folders", driveFolderRoutes);
 app.route("/video-requests", adminVideoRoutes);
 
 // HR modules (Fase 1–3) — organisasi, karyawan, presensi, cuti
@@ -199,9 +208,6 @@ app.route("/employee-tax-profiles", hrEmployeeTaxProfileRoutes);
 app.route("/tax-slips", hrTaxSlipRoutes);
 app.route("/coretax", hrCoretaxRoutes);
 app.route("/reports", hrReportRoutes);
-
-// LLM Gateway (DeepSeek) — request LLM terpusat, key asli hanya di server ini
-app.route("/llm", llmGatewayRoutes);
 
 app.notFound((c) => {
   return c.json(

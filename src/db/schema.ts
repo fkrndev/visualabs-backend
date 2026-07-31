@@ -2897,3 +2897,68 @@ export const reportLogs = mysqlTable(
     },
     (table) => [index('report_logs_template_idx').on(table.reportTemplateId)]
 );
+
+// ───────────────────────── Google Drive: list directory ─────────────────────────
+// Cache struktur folder/file Google Drive. Satu baris = satu item Drive (folder atau file).
+// `parentId` = 0 berarti root (root tidak punya baris sendiri, cuma dipakai sebagai penanda).
+// `syncedAt` diisi timestamp run sync terakhir — dipakai untuk menghapus item yang
+// sudah tidak ada lagi di Drive (lihat cleanStaleChildren di services/driveFolder.ts).
+
+export const driveFolders = mysqlTable(
+    'drive_folder',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        parentId: int('parent_id').notNull().default(0),
+        name: varchar('name', { length: 512 }).notNull(),
+        driveId: varchar('drive_id', { length: 128 }),
+        mimeType: varchar('mime_type', { length: 191 }).notNull(),
+        googleId: varchar('google_id', { length: 191 }).notNull(),
+        parentGoogleId: varchar('parent_google_id', { length: 191 }).notNull(),
+        webViewLink: varchar('web_view_link', { length: 1024 }),
+        iconLink: varchar('icon_link', { length: 1024 }),
+        sizeBytes: bigint('size_bytes', { mode: 'number' }),
+        modifiedTime: timestamp('modified_time'),
+        syncedAt: timestamp('synced_at').defaultNow().notNull(),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [
+        uniqueIndex('drive_folder_google_id_uq').on(table.googleId),
+        index('drive_folder_parent_idx').on(table.parentId),
+        index('drive_folder_parent_google_idx').on(table.parentGoogleId),
+    ]
+);
+
+export const driveFolderClients = mysqlTable(
+    'drive_folder_client',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        folderId: int('folder_id')
+            .notNull()
+            .references(() => driveFolders.id, { onDelete: 'cascade' }),
+        customerId: int('customer_id')
+            .notNull()
+            .references(() => customers.id, { onDelete: 'cascade' }),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [
+        uniqueIndex('drive_folder_client_uq').on(table.folderId, table.customerId),
+        index('drive_folder_client_customer_idx').on(table.customerId),
+    ]
+);
+
+export const driveFolderRelations = relations(driveFolders, ({ many }) => ({
+    clients: many(driveFolderClients),
+}));
+
+export const driveFolderClientRelations = relations(driveFolderClients, ({ one }) => ({
+    folder: one(driveFolders, {
+        fields: [driveFolderClients.folderId],
+        references: [driveFolders.id],
+    }),
+    customer: one(customers, {
+        fields: [driveFolderClients.customerId],
+        references: [customers.id],
+    }),
+}));
