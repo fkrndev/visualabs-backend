@@ -216,7 +216,7 @@ app.notFound((c) => {
 
 app.onError((err, c) => {
   console.error("Error:", err);
-  
+
   // JWT errors should return 401, not 500
   if (err.name === 'JwtTokenExpired' || err.name === 'JwtTokenNotBefore' || err.message.includes('Unauthorized') || err.message.includes('no authorization included in request')) {
     return c.json(
@@ -228,7 +228,35 @@ app.onError((err, c) => {
       401,
     );
   }
-  
+
+  // MySQL duplicate entry (ER_DUP_ENTRY / errno 1062) → 409 Conflict
+  // Drizzle membungkus error MySQL di err.cause
+  // Pesan MySQL: "Duplicate entry 'HQ' for key 'branches.branches_code_unique'"
+  const mysqlErr = (err as any).cause ?? err;
+  if (mysqlErr.code === 'ER_DUP_ENTRY' || mysqlErr.errno === 1062) {
+    const match = mysqlErr.message?.match(/Duplicate entry '([^']*)' for key '([^']*)'/);
+    let message = "Data sudah ada (duplikat)";
+    if (match) {
+      const [, value, keyName] = match;
+      // Map nama key MySQL ke label field yang user-friendly
+      // Format key: "branches.branches_code_unique" → "code"
+      const fieldLabel = keyName
+        .replace(/^[^.]+\./, '')           // hapus prefix tabel
+        .replace(/_unique$/, '')            // hapus suffix _unique
+        .replace(/^[a-z]+_/, '')            // hapus prefix nama tabel
+        .replace(/_/g, ' ');
+      message = `${fieldLabel} "${value}" sudah digunakan. Silakan gunakan nilai lain.`;
+    }
+    return c.json(
+      {
+        success: false,
+        message,
+        error: process.env.NODE_ENV === "development" ? mysqlErr.message : undefined,
+      },
+      409,
+    );
+  }
+
   return c.json(
     {
       success: false,

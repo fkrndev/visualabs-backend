@@ -27,10 +27,6 @@ ALTER TABLE `fb_act`
   ADD CONSTRAINT `fb_act_subscription_id_subscriptions_id_fk`
   FOREIGN KEY (`subscription_id`) REFERENCES `subscriptions`(`id`) ON DELETE cascade ON UPDATE no action;
 
-ALTER TABLE `fb_act`
-  ADD CONSTRAINT `fb_act_token_id_fb_token_id_fk`
-  FOREIGN KEY (`token_id`) REFERENCES `fb_token`(`id`) ON DELETE set null ON UPDATE no action;
-
 CREATE TABLE `fb_token` (
   `id` int AUTO_INCREMENT NOT NULL,
   `user_id` int NOT NULL,
@@ -47,3 +43,7 @@ CREATE INDEX `fb_token_status_idx` ON `fb_token` (`status`);
 ALTER TABLE `fb_token`
   ADD CONSTRAINT `fb_token_user_id_users_id_fk`
   FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE cascade ON UPDATE no action;
+
+ALTER TABLE `fb_act`
+  ADD CONSTRAINT `fb_act_token_id_fb_token_id_fk`
+  FOREIGN KEY (`token_id`) REFERENCES `fb_token`(`id`) ON DELETE set null ON UPDATE no action;

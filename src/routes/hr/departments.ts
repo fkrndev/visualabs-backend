@@ -123,6 +123,20 @@ router.put("/:id", zValidator("json", jsonBody(payloadSchema.partial())), async 
 router.delete("/:id", async (c) => {
   const id = Number(c.req.param("id"));
   if (!Number.isFinite(id)) return c.json({ success: false, message: "ID tidak valid" }, 400);
+
+  // Restrict: tidak boleh hapus departemen yang masih punya child
+  const [child] = await db
+    .select({ id: departments.id })
+    .from(departments)
+    .where(eq(departments.parentId, id))
+    .limit(1);
+  if (child) {
+    return c.json(
+      { success: false, message: "Tidak dapat menghapus departemen yang masih memiliki sub-departemen. Hapus atau pindahkan sub-departemen terlebih dahulu." },
+      409,
+    );
+  }
+
   await db
     .delete(departments)
     .where(eq(departments.id, id));
