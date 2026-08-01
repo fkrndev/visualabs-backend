@@ -19,6 +19,7 @@ import registrationRoutes from "./routes/registration";
 import customerAuthRoutes from "./routes/customerAuth";
 import settingsRoutes from "./routes/settings";
 import productRoutes from "./routes/products";
+import auditTrailRoutes from "./routes/auditTrail";
 import subscriptionRoutes from "./routes/subscriptions";
 import chromeProfileRoutes from "./routes/chromeProfiles";
 import profileLockRoutes from "./routes/profileLocks";
@@ -137,6 +138,7 @@ app.route("/public/registration", registrationRoutes);
 app.route("/public", customerAuthRoutes);
 app.route("/settings", settingsRoutes);
 app.route("/products", productRoutes);
+app.route("/audit-trail", auditTrailRoutes);
 app.route("/subscriptions", subscriptionRoutes);
 app.route("/chrome-profiles", chromeProfileRoutes);
 // LLM Gateway + Relay — WAJIB di-mount SEBELUM route "/" ber-middleware-wildcard.

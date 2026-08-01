@@ -36,7 +36,15 @@ export const requireAuthWithFallback = async (c: Context, next: Next) => {
   try {
     await requireAuth(c, next);
   } catch (error: any) {
-    if (error.name === 'JWTError' || error.message?.includes('jwt')) {
+    // Token rusak/kedaluwarsa dibungkus Hono jadi HTTPException 401 dengan
+    // JwtTokenInvalid / JwtTokenExpired sebagai `cause`. Pencocokan lama hanya
+    // mencari 'jwt' huruf kecil di message, sehingga kasus ini lolos dan
+    // berakhir 500 di onError milik masing-masing router.
+    const parts = [error?.name, error?.message, error?.cause?.name, error?.cause?.message]
+      .filter(Boolean)
+      .map(String)
+      .join(' ');
+    if (/jwt/i.test(parts) || error?.status === 401) {
       return c.json({
         success: false,
         message: "Invalid or expired token"
