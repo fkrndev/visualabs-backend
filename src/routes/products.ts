@@ -116,13 +116,35 @@ router.get('/', zValidator('query', paginationQuery), async (c) => {
 
   const items = await query;
 
+  // Halaman products/admin memakai offset pagination (nomor halaman + "Go to page"),
+  // jadi ia butuh total baris — bukan cuma cursor hasNext.
+  const countQuery = db
+    .select({ value: sql<number>`count(*)` })
+    .from(products);
+
+  if (whereExpr) {
+    countQuery.where(whereExpr);
+  }
+
+  const totalItems = Number((await countQuery)[0]?.value ?? 0);
+  const totalPages = Math.max(1, Math.ceil(totalItems / limit));
+
   const lastId = items.length ? items[items.length - 1].id ?? null : null;
-  const hasNext = items.length === limit;
+  const hasNext = offset + items.length < totalItems;
 
   return c.json({
     success: true,
     data: items,
-    page: { limit, lastId, hasNext, sortBy: sortKey, sortOrder },
+    page: {
+      limit,
+      currentPage: page,
+      totalItems,
+      totalPages,
+      lastId,
+      hasNext,
+      sortBy: sortKey,
+      sortOrder,
+    },
   });
 });
 
