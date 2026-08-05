@@ -1,8 +1,9 @@
 # Tombol "Install Agent" di VBOX → Install `custom-hermes`
 
-**Status:** ✅ Terimplementasi 3 Agustus 2026 — belum diuji E2E di mesin bersih
+**Status:** ✅ Terimplementasi 3 Agustus 2026 · panduan user ditambahkan 5 Agustus 2026 — **belum siap deploy**, lihat [§7 blocker](#blocker-deploy--audit-5-agustus-2026)
 **Keputusan:** distribusi lewat **tarball dari backend**
-**Repo terkait:** `v-box` (Tauri v2 + React), `v-auto-backend` (Bun + Hono), `custom-hermes` (fork `visualabs-id/custom-hermes` dari `NousResearch/hermes-agent`)
+**Repo terkait:** `v-box` (Tauri v2 + React), `v-auto-backend` (Bun + Hono), `custom-hermes` (fork `visualabs-id/custom-hermes` dari `NousResearch/hermes-agent`), `v-auto-frontend` (SvelteKit)
+**Dokumen terkait:** [run.md](run.md) — cara menjalankan Hermes + relay untuk dev local
 
 ---
 
@@ -103,6 +104,7 @@ Yang dilewati: `repository` (source dari tarball), `setup`/`gateway` (butuh inpu
 | `src/routes/hermes.ts` | baru — `GET /manifest`, `/tarball`, `/config`, semua di balik JWT |
 | `src/index.ts` | mount `/hermes` **sebelum** route `"/"` |
 | `.gitignore` | `storage/hermes/` — tanpa ini tarball 69 MB ikut ter-commit |
+| `.env.example` | `HERMES_LLM_PROVIDER` / `HERMES_LLM_MODEL` / `HERMES_LLM_API_KEY` / `HERMES_DIST_DIR` (ditambahkan 5 Agu 2026 — sebelumnya keempatnya tidak terdokumentasi sama sekali) |
 
 Endpoint `/config` menyajikan `config.yaml` + API key dari **env server** (`HERMES_LLM_PROVIDER` / `HERMES_LLM_MODEL` / `HERMES_LLM_API_KEY`), menggantikan key yang ditanam di `install-team.ps1`.
 
@@ -124,6 +126,44 @@ Event: `hermes-install:manifest` / `:stage` / `:log` / `:done`.
 |---|---|
 | `components/HermesInstallModal.tsx` | baru — checklist stage, log tail auto-scroll, batal, salin log, coba lagi |
 | `pages/Settings.tsx` | `HermesControl` cek `hermes_check_installed()`; tombol Install / Update; badge commit |
+
+### VIMS Frontend (`v-auto-frontend`) — ditambahkan 5 Agustus 2026
+
+| Berkas | Isi |
+|---|---|
+| `src/routes/agent/install/+page.svelte` | baru — panduan pasang dengan **dua jalur** (tab): lewat VBOX, atau manual lewat Terminal. Menampilkan **status node live** (`GET /api/relay/nodes`, cari `node-{userId}`, polling 10 detik) + FAQ troubleshooting |
+| `src/lib/components/app-sidebar.svelte` | entri menu "Agent Chat" + "Pasang Agent" di grup Automation, keduanya masuk `ADVERTISER_ALLOWED_URLS` |
+| `src/routes/agent/+page.svelte` | link "Belum ada agent? Pasang di komputermu →" saat daftar node kosong |
+
+**Jalur 1 — VBOX (disarankan).** 5 langkah: unduh VBOX (tab macOS/Windows, link
+`v-box-release/releases/latest`), login, Install Agent, tunggu, Start. Halaman ini murni panduan;
+instalasinya tetap dikerjakan VBOX.
+
+**Deteksi VBOX otomatis.** Mayoritas tim sudah memasang VBOX, jadi langkah 1 hanya jadi gangguan.
+Halaman mem-probe `http://127.0.0.1:40325/health` — VBOX menyalakan Local Automation API tanpa
+syarat saat aplikasinya dibuka (`lib.rs`: *"API task … always ON"*, port default 40325), `/health`
+bebas auth dan CORS-nya `*`. Kalau terdeteksi, langkah 1 berubah jadi kartu hijau bercentang
+"sudah beres" beserta versinya, dan blok unduhan diganti satu tautan kecil.
+
+Tiga hal yang membuat deteksi ini jujur, bukan tebakan:
+
+- Yang terdeteksi adalah VBOX yang **sedang berjalan**, bukan sekadar terpasang — dan justru itu yang relevan, karena agent cuma hidup selama VBOX terbuka.
+- Kegagalan probe di halaman **https** dilaporkan sebagai `blocked` ("tidak bisa memeriksa otomatis"), bukan `absent`. Browser memblokir permintaan ke alamat lokal dari halaman https, jadi gagal ≠ tidak terpasang. Di http, gagal memang berarti tidak berjalan.
+- Ada tombol **Periksa lagi**, untuk kasus user membuka VBOX setelah halaman ini terbuka.
+
+Timeout probe 2,5 detik lewat `AbortController` supaya halaman tidak menggantung saat tidak ada
+yang mendengarkan di port itu.
+
+**Jalur 2 — manual lewat Terminal.** Untuk user yang tidak mau/tidak bisa memakai VBOX. Prinsipnya
+sama persis dengan yang dilakukan VBOX, cuma dijalankan tangan:
+
+1. **Source tetap dari backend**, bukan `git clone`. Tombol unduh melakukan `fetch` ber-`Authorization: Bearer <JWT>` ke `/api/hermes/tarball` lalu menyimpannya sebagai blob — endpoint-nya JWT-only, jadi `<a href>` biasa tidak bisa dipakai. Metadata (commit, ukuran, tanggal) diambil dari `/api/hermes/manifest`.
+2. **Stage `repository` dilewati**, sama seperti `SKIPPED_STAGES` di `hermes_install.rs`. Ini bukan optimasi — kalau ikut dijalankan, `install.sh`/`install.ps1` meng-clone `NousResearch/hermes-agent` dan menimpa source dari server, sehingga `relay_node.py` hilang dan node tidak akan pernah muncul di relay hub. Alasannya dijelaskan ke user dengan bahasa awam di halamannya. Stage yang dijalankan: `prerequisites venv python-deps node-deps path config`.
+3. **`config.yaml` + `.env` di-generate dari halaman.** `config.yaml` apa adanya dari `/api/hermes/config`; `.env` dirakit di browser dengan isi yang identik dengan `write_env_merged()` milik VBOX — API key dari server, `HERMES_RELAY_HUB_URL` diturunkan dari `PUBLIC_API_BASE_URL` (`http→ws`, `https→wss`), `HERMES_RELAY_NODE_ID` = `node-{userId}`, dan `HERMES_RELAY_LOCAL_TOKEN` = `HERMES_DASHBOARD_SESSION_TOKEN` diacak lewat `crypto.randomUUID()`. Berkasnya diarahkan ke `$HERMES_HOME/.env` (bukan root source) karena `env_loader.load_hermes_dotenv()` memuat `~/.hermes/.env` dengan `override=True`.
+4. **Node token diminta lewat input**, tidak diambil otomatis. Backend tidak punya endpoint yang membocorkan `RELAY_NODE_TOKEN` ke user, dan sebaiknya tetap begitu — user memintanya ke admin.
+
+Perbedaan yang disebutkan eksplisit ke user: jalur manual tidak punya auto-start, jadi `hermes serve`
+harus dijalankan lagi tiap reboot.
 
 ### Bug lama yang ikut dibereskan
 
@@ -163,11 +203,34 @@ Baris tebal itu asumsi paling kritis dari seluruh pendekatan ini, dan **diuji la
 
 ## 7. Yang masih perlu dilakukan
 
+### Blocker deploy — audit 5 Agustus 2026
+
+Tidak ada mock/dummy data di jalur ini: `pack-hermes.ts`, `routes/hermes.ts`, `routes/relay.ts`,
+dan `relay/hub.ts` semuanya baca sumber nyata (git, disk, env, DB). Yang menghalangi deploy semata
+**konfigurasi yang belum diisi**, bukan kode yang belum jadi:
+
+- [ ] **`HERMES_LLM_API_KEY` belum ada di `.env` server** (dicek langsung — yang ada cuma `DEEPSEEK_API_KEY` + `RELAY_NODE_TOKEN`). Akibatnya `/api/hermes/config` mengembalikan `env: {}` → VBOX melewati penulisan `.env` → install sukses tapi Hermes tidak bisa memanggil model. Isi juga `HERMES_LLM_PROVIDER` / `HERMES_LLM_MODEL` bila bukan default DeepSeek.
+- [ ] **Tarball di `storage/hermes/` sudah basi.** `manifest.json` menunjuk `45a4396ad0cf` (31 Jul), sedangkan `custom-hermes` HEAD sudah `49dcabed9` (3 Agu) — dan justru commit itu yang mengubah `hermes_cli/relay_node.py` + `stdio.py`. Siapa pun yang install sekarang dapat relay-node versi lama. **Jalankan ulang `bun run scripts/pack-hermes.ts`** sebelum deploy, dan jadikan itu langkah wajib tiap rilis.
+- [ ] **`RELAY_NODE_TOKEN` di `.env` masih token dev** (`dev-...`). Untuk production ganti nilai acak yang panjang. Perhatikan: VBOX mem-*fallback* ke literal `"rahasia123"` kalau field **Relay Node Token** di Settings kosong (`v-box/src-tauri/src/network/relay.rs:61`) — jadi pilih salah satu: set token beneran di tiap VBOX, atau pakai `RELAY_NODE_TOKENS` per-node. Jangan pernah menyetel token server jadi `rahasia123` supaya default itu "bekerja".
+- [ ] **Rotate DeepSeek key** yang masih ter-commit di `custom-hermes/install-team.ps1:114` (nomor barisnya bergeser dari 101; key-nya masih ada dan tetap ada di riwayat git — rotasi, bukan sekadar hapus baris).
+
+### Inkonsistensi arsitektur LLM — perlu diputuskan sebelum rollout
+
+`/api/llm` (LLM Gateway) dibuat supaya key DeepSeek asli **tidak pernah keluar dari server**: node
+cukup diarahkan `base_url` ke `<host>/api/llm/v1`. Tapi `config.yaml` yang ditulis `/api/hermes/config`
+**tidak menyetel `base_url` sama sekali** dan malah mengirim `DEEPSEEK_API_KEY` mentah ke `.env` di
+setiap laptop user. Dua jalur ini saling meniadakan — yang terpasang sekarang adalah jalur yang
+justru menyebarkan key.
+
+Pilih satu sebelum dibagikan ke tim:
+
+1. **Lewat gateway** (disarankan): `/config` menulis `base_url: <host>/api/llm/v1` + `LLM_TEAM_TOKEN`, `env` tidak berisi key asli. Key bisa dirotasi tanpa menyentuh laptop siapa pun.
+2. **Distribusi key**: pertahankan yang sekarang, tapi sadari tiap laptop memegang key yang bisa dipakai di luar jam kerja dan rotasi berarti semua orang harus re-install/re-configure.
+
 ### Sebelum dipakai tim
 
-- [ ] **Set `HERMES_LLM_API_KEY` di env server.** Tanpa ini install tetap sukses tapi Hermes belum bisa memanggil model (user diberi tahu lewat log, tidak gagal diam-diam).
-- [ ] **Rotate DeepSeek key** yang masih ter-commit di `custom-hermes/install-team.ps1:101`.
 - [ ] **Jalankan `bun run scripts/pack-hermes.ts` di server** tiap merilis versi Hermes baru.
+- [ ] Sebarkan link panduan `/agent/install` ke tim (bukan dokumen ini — dokumen ini untuk developer).
 
 ### Pengujian yang belum dilakukan
 
@@ -194,7 +257,7 @@ Baris tebal itu asumsi paling kritis dari seluruh pendekatan ini, dan **diuji la
 
 ## 9. Pertanyaan terbuka
 
-1. Provider LLM final: tetap DeepSeek, atau sudah pindah?
+1. Provider LLM final: tetap DeepSeek, atau sudah pindah? (dan lewat gateway atau distribusi key — lihat §7)
 2. Perlu tombol **Uninstall**? (`custom-hermes/hermes_cli/uninstall.py` sudah ada)
 3. Perlu auto-update Hermes (`hermes update`), atau install manual saja tiap rilis?
 4. Kalau user sudah punya Hermes hasil install manual — sekarang `which_hermes()` mendeteksi dan memakainya. Cukup, atau mau dipaksa ke lokasi standar?
