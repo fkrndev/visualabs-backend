@@ -516,11 +516,20 @@ export const products = mysqlTable(
         name: varchar('name', { length: 191 }).notNull(),
         description: text('description'),
         price: decimal('price', { precision: 12, scale: 2 }).default('0'),
+        // active | inactive | archived
+        status: varchar('status', { length: 20 }).default('active').notNull(),
+        // Soft delete: produk tetap tersimpan dan bisa dipulihkan
+        deletedAt: timestamp('deleted_at'),
+        deletedBy: varchar('deleted_by', { length: 100 }),
         dataJson: json('data_json').$type<JsonRecord>(),
         createdAt: timestamp('created_at').defaultNow().notNull(),
         updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
     },
-    (table) => [uniqueIndex('products_name_unique').on(table.name)]
+    (table) => [
+        uniqueIndex('products_name_unique').on(table.name),
+        index('products_status_idx').on(table.status),
+        index('products_deleted_at_idx').on(table.deletedAt),
+    ]
 );
 
 export const subscriptions = mysqlTable(

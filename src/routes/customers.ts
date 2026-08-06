@@ -25,7 +25,6 @@ import { hashPassword } from '../utils/security';
 import { logAuditEvent, getClientIp, getUserAgent } from '../utils/audit';
 import { requireAuthWithFallback } from '../middleware/auth';
 import { rateLimit } from '../middleware/rateLimit';
-import { csrfProtection } from '../middleware/csrf';
 import { sanitizeString, sanitizeEmail, sanitizePhone, sanitizeUsername } from '../utils/sanitize';
 import { cache } from '../utils/cache';
 import {
@@ -150,7 +149,7 @@ const bulkUpdateSchema = z.object({
   }),
 });
 
-router.get('/', csrfProtection, rateLimit({ windowMs: 60000, maxRequests: 100 }), requireAuthWithFallback, zValidator('query', paginationQuery), async (c) => {
+router.get('/', rateLimit({ windowMs: 60000, maxRequests: 100 }), requireAuthWithFallback, zValidator('query', paginationQuery), async (c) => {
   const {
     cursor,
     limit,
@@ -416,7 +415,7 @@ function invalidateCustomerCache(id: number) {
   cache.delete(`customer:${id}`);
 }
 
-router.post('/', rateLimit({ windowMs: 60000, maxRequests: 20 }), csrfProtection, requireAuthWithFallback, zValidator('json', customerPayload), async (c) => {
+router.post('/', rateLimit({ windowMs: 60000, maxRequests: 20 }), requireAuthWithFallback, zValidator('json', customerPayload), async (c) => {
   const payload = c.req.valid('json');
 
   const {
@@ -531,7 +530,7 @@ router.post('/', rateLimit({ windowMs: 60000, maxRequests: 20 }), csrfProtection
   }
 });
 
-router.put('/:id', rateLimit({ windowMs: 60000, maxRequests: 50 }), csrfProtection, requireAuthWithFallback, zValidator('json', customerUpdatePayload), async (c) => {
+router.put('/:id', rateLimit({ windowMs: 60000, maxRequests: 50 }), requireAuthWithFallback, zValidator('json', customerUpdatePayload), async (c) => {
   const id = Number(c.req.param('id'));
   if (Number.isNaN(id)) {
     return c.json({ success: false, message: 'ID tidak valid' }, 400);
@@ -697,7 +696,7 @@ router.put('/:id', rateLimit({ windowMs: 60000, maxRequests: 50 }), csrfProtecti
   }
 });
 
-router.delete('/:id', rateLimit({ windowMs: 60000, maxRequests: 30 }), csrfProtection, requireAuthWithFallback, async (c) => {
+router.delete('/:id', rateLimit({ windowMs: 60000, maxRequests: 30 }), requireAuthWithFallback, async (c) => {
   const id = Number(c.req.param('id'));
   if (Number.isNaN(id)) {
     return c.json({ success: false, message: 'ID tidak valid' }, 400);
@@ -778,7 +777,7 @@ router.post('/bulk-delete/preview', rateLimit({ windowMs: 60000, maxRequests: 20
   });
 });
 
-router.post('/bulk-delete', rateLimit({ windowMs: 60000, maxRequests: 100 }), csrfProtection, requireAuthWithFallback, zValidator('json', bulkDeleteSchema), async (c) => {
+router.post('/bulk-delete', rateLimit({ windowMs: 60000, maxRequests: 100 }), requireAuthWithFallback, zValidator('json', bulkDeleteSchema), async (c) => {
   const { ids } = c.req.valid('json');
 
   if (ids.length === 0) {
@@ -820,7 +819,7 @@ router.post('/bulk-delete', rateLimit({ windowMs: 60000, maxRequests: 100 }), cs
   });
 });
 
-router.post('/bulk-update', rateLimit({ windowMs: 60000, maxRequests: 100 }), csrfProtection, requireAuthWithFallback, zValidator('json', bulkUpdateSchema), async (c) => {
+router.post('/bulk-update', rateLimit({ windowMs: 60000, maxRequests: 100 }), requireAuthWithFallback, zValidator('json', bulkUpdateSchema), async (c) => {
   const { ids, updates } = c.req.valid('json');
 
   if (ids.length === 0) {
@@ -945,7 +944,7 @@ router.post('/bulk-update', rateLimit({ windowMs: 60000, maxRequests: 100 }), cs
 });
 
 // Export customers with permission check and audit logging
-router.post('/export', rateLimit({ windowMs: 60000, maxRequests: 100 }), csrfProtection, requireAuthWithFallback, zValidator('json', z.object({ ids: z.array(z.number()).optional() })), async (c) => {
+router.post('/export', rateLimit({ windowMs: 60000, maxRequests: 100 }), requireAuthWithFallback, zValidator('json', z.object({ ids: z.array(z.number()).optional() })), async (c) => {
   const { ids } = c.req.valid('json');
 
   let query = db

@@ -1,10 +1,12 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { zValidator } from '@hono/zod-validator';
-import { SQL, and, asc, desc, eq, like, sql } from 'drizzle-orm';
+import { SQL, and, asc, desc, eq, inArray, isNull, isNotNull, like, sql } from 'drizzle-orm';
 
 import { db } from '../db/client';
-import { products } from '../db/schema';
+import { products, users, profiles } from '../db/schema';
+import { requireAuthWithFallback } from '../middleware/auth';
+import { logAuditEvent, getClientIp, getUserAgent } from '../utils/audit';
 
 // Import test database schema for compatibility
 import { sqliteTable, text, integer, real } from 'drizzle-orm/sqlite-core';
@@ -35,12 +37,22 @@ router.onError((err, c) => {
   }, 500);
 });
 
+// Sebelumnya seluruh route product bisa diakses tanpa token sama sekali,
+// termasuk DELETE dan bulk-delete. Karena subscriptions.product_id memakai
+// ON DELETE CASCADE, siapa pun bisa ikut menghapus seluruh subscription.
+router.use('*', requireAuthWithFallback);
+
+const productStatus = z.enum(['active', 'inactive', 'archived']);
+
 const paginationQuery = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(20),
   q: z.string().trim().optional(),
+  status: productStatus.optional(),
+  // 'true' = hanya tampilkan yang sudah di-soft-delete (keranjang sampah)
+  deleted: z.string().optional(),
   sortBy: z
-    .enum(['id', 'name', 'price', 'createdAt', 'updatedAt'])
+    .enum(['id', 'name', 'price', 'status', 'createdAt', 'updatedAt'])
     .optional(),
   sortOrder: z.enum(['asc', 'desc']).optional(),
 });
@@ -49,6 +61,7 @@ const productPayload = z.object({
   name: z.string().min(1),
   description: z.string().optional(),
   price: z.string().optional(),
+  status: productStatus.optional(),
 });
 
 const updateProductPayload = productPayload.partial();
@@ -71,6 +84,8 @@ router.get('/', zValidator('query', paginationQuery), async (c) => {
     page,
     limit,
     q,
+    status,
+    deleted,
     sortBy: sortByParam,
     sortOrder: sortOrderParam,
   } = c.req.valid('query');
@@ -82,6 +97,11 @@ router.get('/', zValidator('query', paginationQuery), async (c) => {
     const value = `%${q}%`;
     filters.push(like(products.name, value));
   }
+  if (status) {
+    filters.push(eq(products.status, status));
+  }
+  // Default: sembunyikan yang sudah di-soft-delete. deleted=true = keranjang sampah.
+  filters.push(deleted === 'true' ? isNotNull(products.deletedAt) : isNull(products.deletedAt));
 
   const whereExpr = filters.length ? and(...filters) : undefined;
 
@@ -89,6 +109,7 @@ router.get('/', zValidator('query', paginationQuery), async (c) => {
     id: products.id,
     name: products.name,
     price: products.price,
+    status: products.status,
     createdAt: products.createdAt,
     updatedAt: products.updatedAt,
   } as const;
@@ -116,13 +137,35 @@ router.get('/', zValidator('query', paginationQuery), async (c) => {
 
   const items = await query;
 
+  // Halaman products/admin memakai offset pagination (nomor halaman + "Go to page"),
+  // jadi ia butuh total baris — bukan cuma cursor hasNext.
+  const countQuery = db
+    .select({ value: sql<number>`count(*)` })
+    .from(products);
+
+  if (whereExpr) {
+    countQuery.where(whereExpr);
+  }
+
+  const totalItems = Number((await countQuery)[0]?.value ?? 0);
+  const totalPages = Math.max(1, Math.ceil(totalItems / limit));
+
   const lastId = items.length ? items[items.length - 1].id ?? null : null;
-  const hasNext = items.length === limit;
+  const hasNext = offset + items.length < totalItems;
 
   return c.json({
     success: true,
     data: items,
-    page: { limit, lastId, hasNext, sortBy: sortKey, sortOrder },
+    page: {
+      limit,
+      currentPage: page,
+      totalItems,
+      totalPages,
+      lastId,
+      hasNext,
+      sortBy: sortKey,
+      sortOrder,
+    },
   });
 });
 
@@ -154,6 +197,7 @@ router.post('/', zValidator('json', productPayload), async (c) => {
       name: payload.name,
       description: payload.description ?? null,
       price: payload.price ?? '0',
+      status: payload.status ?? 'active',
     });
 
     const insertId = Number(insertResult.insertId);
@@ -185,6 +229,7 @@ router.put('/:id', zValidator('json', updateProductPayload), async (c) => {
   if (payload.name !== undefined) sets.name = payload.name;
   if (payload.description !== undefined) sets.description = payload.description ?? null;
   if (payload.price !== undefined) sets.price = payload.price ?? '0';
+  if (payload.status !== undefined) sets.status = payload.status;
 
   if (!Object.keys(sets).length) {
     return c.json({ success: false, message: 'Tidak ada data yang diupdate' }, 400);
@@ -217,6 +262,184 @@ router.delete('/:id', async (c) => {
 
   await db.delete(products).where(eq(products.id, id));
   return c.json({ success: true, message: 'Product dihapus' });
+});
+
+// ─── Status & soft delete ────────────────────────────────────────────
+// Dipakai bulk action di halaman products/admin.
+
+const bulkIdsPayload = z.object({
+  ids: z.array(z.number().int().positive()).min(1, 'Invalid IDs provided'),
+});
+
+const bulkStatusPayload = bulkIdsPayload.extend({ status: productStatus });
+
+const softDeletePayload = z.object({ deletedBy: z.string().max(100).optional() });
+
+async function productsByIds(ids: number[]) {
+  return db.select().from(products).where(inArray(products.id, ids));
+}
+
+/** requireAuth (hono/jwt) hanya mengisi jwtPayload, bukan c.get('userId'). */
+function currentUserId(c: any): number | undefined {
+  const sub = Number(c.get('jwtPayload')?.sub);
+  return Number.isFinite(sub) ? sub : undefined;
+}
+
+/**
+ * Siapa yang menghapus ditentukan server dari token, bukan dari body request —
+ * frontend mengirim string hardcoded 'current_user' sehingga kolom deleted_by
+ * tidak ada gunanya, dan klien juga tidak sepantasnya menentukan hal ini.
+ */
+async function currentUserLabel(c: any): Promise<string | null> {
+  const userId = currentUserId(c);
+  if (!userId) return null;
+
+  const rows = await db
+    .select({ name: profiles.name, username: users.username, email: users.email })
+    .from(users)
+    .leftJoin(profiles, eq(profiles.userId, users.id))
+    .where(eq(users.id, userId))
+    .limit(1);
+
+  const row = rows[0];
+  return row ? (row.name ?? row.username ?? row.email ?? String(userId)) : String(userId);
+}
+
+async function auditProducts(
+  c: any,
+  action: string,
+  rows: { id: number; name: string }[],
+  changes: Record<string, unknown>
+) {
+  for (const row of rows) {
+    await logAuditEvent({
+      userId: currentUserId(c),
+      action,
+      entityType: 'product',
+      entityId: row.id,
+      changes: { productName: row.name, ...changes },
+      ipAddress: getClientIp(c),
+      userAgent: getUserAgent(c),
+    });
+  }
+}
+
+router.post('/:id/soft-delete', zValidator('json', softDeletePayload), async (c) => {
+  const id = Number(c.req.param('id'));
+  if (Number.isNaN(id)) {
+    return c.json({ success: false, message: 'ID tidak valid' }, 400);
+  }
+
+  const actor = (await currentUserLabel(c)) ?? c.req.valid('json').deletedBy ?? null;
+  const existing = (await productsByIds([id]))[0];
+  if (!existing) {
+    return c.json({ success: false, message: 'Product tidak ditemukan' }, 404);
+  }
+
+  await db
+    .update(products)
+    .set({ deletedAt: new Date(), deletedBy: actor })
+    .where(eq(products.id, id));
+
+  const updated = (await productsByIds([id]))[0];
+  await auditProducts(c, 'SOFT_DELETE', [existing], { deletedBy: actor });
+
+  return c.json({ success: true, data: updated, message: 'Product dipindahkan ke sampah' });
+});
+
+router.post('/:id/restore', async (c) => {
+  const id = Number(c.req.param('id'));
+  if (Number.isNaN(id)) {
+    return c.json({ success: false, message: 'ID tidak valid' }, 400);
+  }
+
+  const existing = (await productsByIds([id]))[0];
+  if (!existing) {
+    return c.json({ success: false, message: 'Product tidak ditemukan' }, 404);
+  }
+
+  await db
+    .update(products)
+    .set({ deletedAt: null, deletedBy: null })
+    .where(eq(products.id, id));
+
+  const updated = (await productsByIds([id]))[0];
+  await auditProducts(c, 'RESTORE', [existing], {});
+
+  return c.json({ success: true, data: updated, message: 'Product dipulihkan' });
+});
+
+router.post('/bulk-status', zValidator('json', bulkStatusPayload), async (c) => {
+  const { ids, status } = c.req.valid('json');
+
+  const before = await productsByIds(ids);
+  if (!before.length) {
+    return c.json({ success: false, message: 'Product tidak ditemukan' }, 404);
+  }
+
+  await db.update(products).set({ status }).where(inArray(products.id, ids));
+
+  const after = await productsByIds(ids);
+  for (const row of before) {
+    await logAuditEvent({
+      userId: currentUserId(c),
+      action: 'STATUS_CHANGE',
+      entityType: 'product',
+      entityId: row.id,
+      changes: { productName: row.name, field: 'status', oldValue: row.status, newValue: status },
+      ipAddress: getClientIp(c),
+      userAgent: getUserAgent(c),
+    });
+  }
+
+  return c.json({
+    success: true,
+    data: after,
+    message: `${after.length} produk diubah ke status ${status}`,
+  });
+});
+
+router.post('/bulk-soft-delete', zValidator('json', bulkIdsPayload.merge(softDeletePayload)), async (c) => {
+  const { ids, deletedBy } = c.req.valid('json');
+  const actor = (await currentUserLabel(c)) ?? deletedBy ?? null;
+
+  const before = await productsByIds(ids);
+  if (!before.length) {
+    return c.json({ success: false, message: 'Product tidak ditemukan' }, 404);
+  }
+
+  await db
+    .update(products)
+    .set({ deletedAt: new Date(), deletedBy: actor })
+    .where(inArray(products.id, ids));
+
+  const after = await productsByIds(ids);
+  await auditProducts(c, 'SOFT_DELETE', before, { deletedBy: actor });
+
+  return c.json({
+    success: true,
+    data: after,
+    message: `${after.length} produk dipindahkan ke sampah`,
+  });
+});
+
+router.post('/bulk-restore', zValidator('json', bulkIdsPayload), async (c) => {
+  const { ids } = c.req.valid('json');
+
+  const before = await productsByIds(ids);
+  if (!before.length) {
+    return c.json({ success: false, message: 'Product tidak ditemukan' }, 404);
+  }
+
+  await db
+    .update(products)
+    .set({ deletedAt: null, deletedBy: null })
+    .where(inArray(products.id, ids));
+
+  const after = await productsByIds(ids);
+  await auditProducts(c, 'RESTORE', before, {});
+
+  return c.json({ success: true, data: after, message: `${after.length} produk dipulihkan` });
 });
 
 // Bulk operations endpoints
