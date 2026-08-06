@@ -265,6 +265,14 @@ router.post(
 
 router.post("/:id/cancel", async (c) => {
   const id = Number(c.req.param("id"));
+  const [existing] = await db.select().from(leaves).where(eq(leaves.id, id)).limit(1);
+  if (!existing) return c.json({ success: false, message: "Tidak ditemukan" }, 404);
+  if (existing.status !== 0) {
+    return c.json(
+      { success: false, message: "Hanya cuti dengan status pending yang dapat dibatalkan" },
+      403,
+    );
+  }
   await db
     .update(leaves)
     .set({ status: 3 })

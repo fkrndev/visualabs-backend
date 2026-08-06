@@ -8,6 +8,7 @@ import { announcements } from "../../db/schema";
 import { requireAuth } from "../../middleware/auth";
 import { requireHR, getHrUserId } from "../../middleware/hrAccess";
 import { jsonBody } from "../../utils/zod";
+import { logActivity, ActivityAction } from "../../utils/activity";
 
 const router = new Hono();
 router.use("*", requireAuth, requireHR);
@@ -81,6 +82,7 @@ router.post("/", zValidator("json", jsonBody(payloadSchema)), async (c) => {
     status: p.status ?? 0,
   });
   const [row] = await db.select().from(announcements).where(eq(announcements.id, res.insertId)).limit(1);
+  await logActivity({ userId: getHrUserId(c), action: ActivityAction.CREATE, module: "announcement", referenceId: res.insertId, newValue: { title: p.title, status: p.status ?? 0 } });
   return c.json({ success: true, data: row }, 201);
 });
 
@@ -104,6 +106,7 @@ router.put("/:id", zValidator("json", jsonBody(payloadSchema.partial())), async 
     await db.update(announcements).set(setValues).where(eq(announcements.id, id));
   }
   const [row] = await db.select().from(announcements).where(eq(announcements.id, id)).limit(1);
+  await logActivity({ userId: getHrUserId(c), action: ActivityAction.UPDATE, module: "announcement", referenceId: id, newValue: p });
   return c.json({ success: true, data: row });
 });
 
@@ -111,6 +114,7 @@ router.delete("/:id", async (c) => {
   const id = Number(c.req.param("id"));
   if (!Number.isFinite(id)) return c.json({ success: false, message: "ID tidak valid" }, 400);
   await db.delete(announcements).where(eq(announcements.id, id));
+  await logActivity({ userId: getHrUserId(c), action: ActivityAction.DELETE, module: "announcement", referenceId: id });
   return c.json({ success: true, message: "Pengumuman dihapus" });
 });
 

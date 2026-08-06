@@ -49,7 +49,21 @@ router.get("/latest", async (c) => {
   `);
   // mysql2 returns [rows, fields] sometimes; normalize
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const data = Array.isArray((rows as any)[0]) ? (rows as any)[0] : rows;
+  const raw = Array.isArray((rows as any)[0]) ? (rows as any)[0] : rows;
+  // Convert snake_case (raw SQL) to camelCase to match Drizzle schema & frontend types
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const data = (raw as any[]).map((r) => ({
+    id: r.id,
+    employeeId: r.employee_id,
+    latitude: r.latitude,
+    longitude: r.longitude,
+    accuracy: r.accuracy,
+    address: r.address,
+    batteryLevel: r.battery_level,
+    isMockLocation: r.is_mock_location,
+    trackedAt: r.tracked_at,
+    createdAt: r.created_at,
+  }));
   return c.json({ success: true, data });
 });
 

@@ -131,7 +131,7 @@ const bulkAssignSchema = z.object({
   employeeIds: z.array(z.coerce.number().int()).min(1),
 });
 
-router.post("/assign", zValidator("json", jsonBody(bulkAssignSchema)), async (c) => {
+router.post("/assign", zValidator("json", bulkAssignSchema), async (c) => {
   const { workScheduleId, employeeIds } = c.req.valid("json");
 
   // Verify schedule belongs to business (if not null)

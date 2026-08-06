@@ -308,7 +308,8 @@ router.post("/bulk", zValidator("json", jsonBody(bulkPayload)), async (c) => {
       inserted++;
     } catch (e: unknown) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      if ((e as any)?.code !== "ER_DUP_ENTRY") throw e;
+      const mysqlErr = (e as any)?.cause ?? e;
+      if (mysqlErr?.code !== "ER_DUP_ENTRY" && mysqlErr?.errno !== 1062) throw e;
     }
   }
   return c.json({ success: true, data: { inserted, total: items.length } });
