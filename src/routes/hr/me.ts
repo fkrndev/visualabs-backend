@@ -935,7 +935,7 @@ approvals.post("/:module/:id/approve", async (c) => {
   return c.json({ success: true, data: row });
 });
 
-approvals.post("/:module/:id/reject", zValidator("json", jsonBody(z.object({ rejectionReason: z.string().optional() }))), async (c) => {
+approvals.post("/:module/:id/reject", zValidator("json", jsonBody(z.object({ rejectionReason: z.string().min(1, "Alasan penolakan wajib diisi") }))), async (c) => {
   const userId = getHrUserId(c);
   const mod = c.req.param("module");
   const id = Number(c.req.param("id"));
@@ -948,7 +948,7 @@ approvals.post("/:module/:id/reject", zValidator("json", jsonBody(z.object({ rej
 
   // Not every table has a rejectionReason column (overtime/cashAdvance don't).
   const setValues: Record<string, unknown> = { status: 2, approverId: userId, approvedAt: new Date() };
-  if (mod === "leave" || mod === "reimbursement" || mod === "attendance") setValues.rejectionReason = rejectionReason ?? null;
+  if (mod === "leave" || mod === "reimbursement" || mod === "attendance") setValues.rejectionReason = rejectionReason;
   await db.update(table).set(setValues).where(eq(table.id, id));
 
   await logActivity({ userId, action: ActivityAction.REJECT, module: mod, referenceId: id });

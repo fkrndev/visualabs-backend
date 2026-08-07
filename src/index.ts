@@ -193,15 +193,19 @@ app.route("/payrolls", hrPayrollRoutes);
 // Harus didaftarkan SEBELUM route yang punya JWT middleware global (compensation di "/")
 app.route("/relay", relayRoutes);
 
-// compensation di-mount root: /salary-structures, /allowances, /employee-allowances
-app.route("/", hrCompensationRoutes);
-// Portal ESS (self-service karyawan)
+// Portal ESS (self-service karyawan) + Fase 7 (pengumuman + audit log) + Fase 9
+// (field/sales) WAJIB di-mount SEBELUM route "/" ber-middleware-wildcard.
+// hrCompensationRoutes memakai use("*", requireAuth, requirePayroll) yang, karena
+// di-mounted di "/", bocor ke route yang didaftarkan setelahnya. Mount di sini agar
+// /api/me/*, /api/announcements/*, /api/activity-logs/*, /api/clients/* tidak ikut
+// ter-gate payroll (ESS portal harus bisa diakses semua karyawan yang sudah link ke
+// employees, bukan hanya HRD/Akuntan/management).
 app.route("/me", hrMeRoutes);
-// Fase 7 — pendukung: pengumuman + audit log
 app.route("/announcements", hrAnnouncementRoutes);
 app.route("/activity-logs", hrActivityLogRoutes);
-// Fase 9 — field/sales
 app.route("/clients", hrClientRoutes);
+// compensation di-mount root: /salary-structures, /allowances, /employee-allowances
+app.route("/", hrCompensationRoutes);
 app.route("/client-visits", hrClientVisitRoutes);
 app.route("/location-tracks", hrLocationTrackRoutes);
 // Fase 8 — keuangan (rekening perusahaan + petty cash)
