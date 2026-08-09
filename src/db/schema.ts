@@ -6,6 +6,7 @@ import {
     int,
     json,
     longtext,
+    mediumtext,
     mysqlEnum,
     mysqlTable,
     serial,
@@ -2970,4 +2971,120 @@ export const driveFolderClientRelations = relations(driveFolderClients, ({ one }
         fields: [driveFolderClients.customerId],
         references: [customers.id],
     }),
+}));
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Team Skill Hub — berbagi skill Hermes antar anggota tim.
+//
+// Lihat docs/plan-hermes/manage-skill.md. Ringkasnya: skill hidup sebagai
+// SKILL.md di ~/.hermes/skills/ pada laptop masing-masing orang; tabel ini
+// adalah registry terpusat supaya satu orang bisa membagikannya ke yang lain.
+// Konten disimpan di kolom (bukan berkas) karena ukurannya dibatasi Hermes di
+// 100.000 karakter — cukup kecil untuk database, dan menghindari penyimpanan
+// berkas terpisah beserta backup-nya.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const teamSkills = mysqlTable(
+    'team_skills',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        // Nama = nama direktori skill di mesin orang lain, jadi harus unik dan
+        // aman dipakai sebagai path. Divalidasi ketat di route.
+        name: varchar('name', { length: 150 }).notNull(),
+        category: varchar('category', { length: 100 }),
+        description: varchar('description', { length: 500 }),
+        version: varchar('version', { length: 32 }),
+        tags: json('tags').$type<string[]>(),
+        // mediumtext (16 MB), BUKAN text (64 KB): batas Hermes 100.000 karakter
+        // bisa melewati 64 KB pada teks non-ASCII dan akan terpotong diam-diam.
+        content: mediumtext('content').notNull(),
+        // sha256 dari content — dipakai membandingkan salinan lokal vs registry
+        // tanpa perlu mengirim seluruh isinya.
+        contentHash: varchar('content_hash', { length: 64 }).notNull(),
+        authorUserId: int('author_user_id')
+            .notNull()
+            .references(() => users.id, { onDelete: 'cascade' }),
+        status: varchar('status', { length: 20 }).default('published').notNull(),
+        installCount: int('install_count').default(0).notNull(),
+        // Didenormalisasi supaya pengurutan "paling bagus" tidak butuh agregasi
+        // tiap request; dihitung ulang di dalam transaksi saat rating berubah.
+        ratingAvg: decimal('rating_avg', { precision: 3, scale: 2 }).default('0').notNull(),
+        ratingCount: int('rating_count').default(0).notNull(),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [
+        uniqueIndex('team_skills_name_uq').on(table.name),
+        index('team_skills_status_idx').on(table.status),
+        index('team_skills_author_idx').on(table.authorUserId),
+    ]
+);
+
+export const teamSkillRatings = mysqlTable(
+    'team_skill_ratings',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        skillId: int('skill_id')
+            .notNull()
+            .references(() => teamSkills.id, { onDelete: 'cascade' }),
+        userId: int('user_id')
+            .notNull()
+            .references(() => users.id, { onDelete: 'cascade' }),
+        rating: int('rating').notNull(), // 1..5, divalidasi zod di route
+        comment: varchar('comment', { length: 1000 }),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [
+        // Satu orang satu rating per skill (boleh diubah, tidak boleh ditumpuk).
+        uniqueIndex('team_skill_ratings_uq').on(table.skillId, table.userId),
+    ]
+);
+
+export const teamSkillUsage = mysqlTable(
+    'team_skill_usage',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        skillId: int('skill_id')
+            .notNull()
+            .references(() => teamSkills.id, { onDelete: 'cascade' }),
+        userId: int('user_id')
+            .notNull()
+            .references(() => users.id, { onDelete: 'cascade' }),
+        // Angka MENTAH dari ~/.hermes/skills/.usage.json di mesin user, yang
+        // isinya total kumulatif. Karena itu baris ini di-UPSERT (nilai diganti),
+        // bukan ditambahkan — kalau di-tambah, angkanya berlipat setiap kali
+        // modal Agent Tools dibuka.
+        useCount: int('use_count').default(0).notNull(),
+        viewCount: int('view_count').default(0).notNull(),
+        patchCount: int('patch_count').default(0).notNull(),
+        lastUsedAt: timestamp('last_used_at'),
+        reportedAt: timestamp('reported_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [uniqueIndex('team_skill_usage_uq').on(table.skillId, table.userId)]
+);
+
+export const teamSkillRelations = relations(teamSkills, ({ one, many }) => ({
+    author: one(users, {
+        fields: [teamSkills.authorUserId],
+        references: [users.id],
+    }),
+    ratings: many(teamSkillRatings),
+    usage: many(teamSkillUsage),
+}));
+
+export const teamSkillRatingRelations = relations(teamSkillRatings, ({ one }) => ({
+    skill: one(teamSkills, {
+        fields: [teamSkillRatings.skillId],
+        references: [teamSkills.id],
+    }),
+    user: one(users, { fields: [teamSkillRatings.userId], references: [users.id] }),
+}));
+
+export const teamSkillUsageRelations = relations(teamSkillUsage, ({ one }) => ({
+    skill: one(teamSkills, {
+        fields: [teamSkillUsage.skillId],
+        references: [teamSkills.id],
+    }),
+    user: one(users, { fields: [teamSkillUsage.userId], references: [users.id] }),
 }));
