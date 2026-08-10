@@ -1,7 +1,7 @@
 # Riset: bagaimana Hermes di laptop tim bisa selalu ter-update
 
-Status: **D dan A sudah dikerjakan** (10 Agustus 2026). Prasyarat bagian 4
-belum. Lihat § 6 untuk apa yang nyata dibangun.
+Status: **D, A, dan prasyarat § 4 sudah dikerjakan** (10 Agustus 2026).
+Lihat § 6 untuk apa yang nyata dibangun.
 
 Pertanyaannya: kalau ada update `custom-hermes`, bagaimana caranya sampai ke
 laptop setiap orang? Dokumen ini memetakan keadaan sekarang dulu, lalu opsi.
@@ -178,7 +178,7 @@ bisa memberi tahu "ada versi baru" tanpa polling.
 
 ---
 
-## 4. Prasyarat (bukan opsi)
+## 4. Prasyarat (bukan opsi) — SUDAH DIKERJAKAN, lihat § 6
 
 Bagian 2 sebaiknya ditutup sebelum jalur update mana pun dipercepat —
 mempercepat jalur yang bocor hanya mempercepat kebocorannya.
@@ -274,8 +274,62 @@ yang dipakainya sudah diverifikasi terpisah sebelumnya.
 **Belum sampai ke tim**: v-box tidak punya pipeline deploy, jadi ini baru ada
 setelah ada rilis VBOX berikutnya.
 
-### Yang sengaja belum dikerjakan
+### Prasyarat § 4 — updater bawaan Hermes ditutup untuk install VBOX
 
-Prasyarat § 4 (tiga perbaikan di `custom-hermes` supaya updater bawaan Hermes
-tidak bisa dipakai di install VBOX). Sekarang D sudah jalan, ketiganya cukup
-di-push ke `main` dan tarball ter-pack sendiri.
+Semuanya di `custom-hermes`. Pola-nya meniru penjagaan `docker` yang sudah ada,
+supaya tidak lahir cara kedua untuk hal yang sama.
+
+`hermes_cli/config.py` — satu tempat yang jadi rujukan sisanya:
+`VBOX_INSTALL_METHOD`, `is_vbox_install()`, `format_vbox_update_message()`, dan
+`recommended_update_command_for_method()` yang mengembalikan
+"VBOX → Settings → Hermes Engine → Update" alih-alih `hermes update`.
+
+Lalu empat pintu ditutup:
+
+| Pintu | Sebelum | Sesudah |
+|---|---|---|
+| `hermes update` (`main.py`) | macOS/Linux buntu, **Windows menimpa fork dengan upstream** | berhenti dengan pesan VBOX, exit 1, **sebelum** menyentuh git/ZIP |
+| `POST /api/hermes/update` | hanya memblokir `docker` | menolak, tidak men-spawn updater |
+| `GET /api/hermes/update/check` | `can_apply` sudah `false` | tidak lagi memanggil `check_for_updates()` sama sekali |
+| banner / badge TUI | menawarkan update palsu dari PyPI | diam |
+
+Ditambah `/update` di TUI (`cli_commands_mixin.py`): dijaga lebih awal supaya
+user tidak kehilangan sesinya hanya untuk diberi tahu "tidak bisa" —
+`hermes update` toh sudah menolak, tapi handler itu keluar dari sesi dulu baru
+menjalankannya.
+
+`can_update_hermes` di payload status dashboard ikut `false`, jadi tombolnya
+tidak muncul. Endpoint-nya tetap dijaga sendiri: yang menekan tombol bukan
+satu-satunya yang bisa memanggilnya — relay VIMS mem-proxy path apa pun ke
+server ini tanpa allowlist.
+
+**Temuan yang tidak ada di rencana § 4** — dan tanpanya semua di atas jadi
+kode mati: `scripts/install.sh` stage `complete` menulis
+`echo "git" > $INSTALL_DIR/.install_method`. VBOX menulis stempel
+`vbox-tarball` saat extract lalu **menjalankan stage itu**, jadi stempelnya
+tertimpa pada setiap install dan update. Artinya di macOS/Linux tidak ada
+satu pun penjagaan di atas yang pernah aktif di install VBOX yang sebenarnya.
+Sekarang stempel yang sudah ada dihormati (`stamp_install_method_git()`);
+install biasa tetap distempel `git` seperti dulu.
+
+Ironisnya `install.ps1` tidak pernah menstempel sama sekali, jadi justru
+Windows — satu-satunya platform dengan jalur ZIP yang berbahaya — yang selama
+ini menyimpan stempel yang benar.
+
+**Verifikasi** (bukan sekadar compile):
+
+- `tests/test_vbox_install_update_guard.py`, 7 tes, lulus. Dicek bahwa tes
+  `check_for_updates` benar-benar **gagal** kalau penjagaannya dilucuti —
+  tanpa itu tesnya tidak membuktikan apa pun. Tes itu berjalan di subprocess:
+  tes lain di suite ini menukar entri `sys.modules["hermes_cli.config"]`, jadi
+  menambal objek modul dari file tes malah tidak menambal apa-apa dan hasilnya
+  bergantung pada tes mana yang jalan duluan.
+- 9 tes lain gagal saat suite dijalankan bersama (`test_managed_uv`,
+  `test_update_autostash`, `test_web_server_cron_profiles`) — dipastikan
+  **sudah gagal di tree bersih sebelum perubahan ini**, polusi antar-tes yang
+  sudah ada.
+- `POST /api/hermes/update` → `ok:false`, `error:"vbox_update_unsupported"`,
+  `pid:null` (tidak ada proses updater yang lahir).
+- `GET /api/hermes/update/check` → `can_apply:false`, `behind:null`.
+- `hermes update --check` di tree ber-stamp `vbox-tarball` → exit 1, pesan
+  VBOX, dan **tidak** ada lagi "Not a git repository".
