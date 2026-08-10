@@ -99,13 +99,34 @@ router.get("/tarball", requireAuthWithFallback, async (c) => {
 // setelah install selesai.
 //
 // Stage `setup` milik install.sh butuh input interaktif, jadi VBOX melewatinya
-// dan menulis config sendiri dari sini. API key sengaja datang dari env server
-// (bukan ditanam di skrip atau di binary VBOX) supaya bisa dirotasi tanpa rilis
-// ulang, dan supaya tidak ikut ter-commit seperti di `install-team.ps1`.
+// dan menulis config sendiri dari sini.
+//
+// DUA MODE, dipilih lewat HERMES_LLM_PROVIDER:
+//
+//   custom (disarankan) — Hermes diarahkan ke LLM Gateway milik kita sendiri
+//     (/api/llm/v1). Key DeepSeek asli TIDAK PERNAH keluar dari server; yang
+//     dikirim ke laptop tim hanya base_url + LLM_TEAM_TOKEN yang bisa dicabut
+//     kapan saja tanpa menyentuh mesin siapa pun. Provider `custom` di Hermes
+//     memang tidak butuh env key (`env_vars=()` — "No fixed key").
+//
+//   deepseek/lainnya — key asli disalin ke .env setiap laptop. Rotasi berarti
+//     menyentuh semua mesin, dan key hidup di banyak tempat sekaligus.
+//
+// Riwayatnya: sebelum ini key ditanam mentah di `install-team.ps1` dan ikut
+// ter-commit. Mode gateway ada supaya kesalahan itu tidak terulang dalam bentuk
+// lain (tertanam di .env belasan laptop, bukan di git).
 router.get("/config", requireAuthWithFallback, async (c) => {
 	const provider = process.env.HERMES_LLM_PROVIDER || "deepseek";
 	const model = process.env.HERMES_LLM_MODEL || "deepseek-chat";
 	const apiKey = process.env.HERMES_LLM_API_KEY || "";
+
+	const viaGateway = provider === "custom";
+	// Base URL gateway yang dilihat dari LUAR (laptop tim), bukan dari dalam
+	// server — jadi tidak bisa diturunkan dari request; harus disetel eksplisit.
+	const gatewayBaseUrl = (
+		process.env.HERMES_LLM_BASE_URL || "https://vims.dots.my.id/api/llm/v1"
+	).replace(/\/+$/, "");
+	const teamToken = process.env.LLM_TEAM_TOKEN || "";
 
 	// Nama env var key mengikuti konvensi Hermes: <PROVIDER>_API_KEY.
 	const keyName = `${provider.toUpperCase()}_API_KEY`;
@@ -114,6 +135,10 @@ router.get("/config", requireAuthWithFallback, async (c) => {
 		"model:",
 		`  provider: ${provider}`,
 		`  default: ${model}`,
+		// base_url + api_key hanya relevan di mode gateway. api_key di sini
+		// adalah token tim milik kita, BUKAN key DeepSeek.
+		...(viaGateway ? [`  base_url: ${gatewayBaseUrl}`] : []),
+		...(viaGateway && teamToken ? [`  api_key: ${teamToken}`] : []),
 		"terminal:",
 		"  backend: local",
 		"agent:",
@@ -151,11 +176,26 @@ router.get("/config", requireAuthWithFallback, async (c) => {
 		success: true,
 		data: {
 			config_yaml: configYaml,
-			// Kosong kalau HERMES_LLM_API_KEY belum di-set di server — VBOX akan
-			// melewati penulisan .env dan memberi tahu user, bukan menulis key kosong.
-			env: apiKey ? { [keyName]: apiKey } : {},
+			// Mode gateway: SENGAJA kosong — tidak ada key yang perlu mendarat di
+			// laptop siapa pun. Mode langsung: kosong berarti HERMES_LLM_API_KEY
+			// belum di-set di server, dan itu memang keadaan yang salah.
+			env: viaGateway ? {} : apiKey ? { [keyName]: apiKey } : {},
 			provider,
 			model,
+			// Dibaca VBOX untuk membedakan "env kosong karena memang tidak perlu"
+			// dari "env kosong karena server belum dikonfigurasi". Tanpa ini VBOX
+			// memperingatkan user soal API key yang hilang padahal semuanya benar.
+			mode: viaGateway ? "gateway" : "direct",
+			// Peringatan yang layak ditampilkan ke user, kalau ada. Gateway tanpa
+			// LLM_TEAM_TOKEN berarti endpoint LLM kita terbuka untuk siapa saja di
+			// internet dengan tagihan ke kita.
+			warning: viaGateway
+				? teamToken
+					? null
+					: "LLM_TEAM_TOKEN belum di-set di server — endpoint /api/llm terbuka tanpa autentikasi."
+				: apiKey
+					? null
+					: "HERMES_LLM_API_KEY belum di-set di server — Hermes akan terpasang tapi belum bisa memanggil model.",
 		},
 	});
 });
