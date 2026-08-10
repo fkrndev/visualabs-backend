@@ -117,8 +117,12 @@ Endpoint `/config` menyajikan `config.yaml` + API key dari **env server** (`HERM
 | `src/lib.rs` | `which_hermes()` / `kill_hermes_on_port()` / `stop_hermes()` jadi cross-platform |
 | `tauri.conf.json` | hapus resource `../../hermes-agent/dist/hermes_engine/` |
 
-Command: `hermes_check_installed`, `hermes_install_start`, `hermes_install_cancel`, `hermes_install_status`.
+Command: `hermes_check_installed`, `hermes_check_update`, `hermes_install_start`, `hermes_install_cancel`, `hermes_install_status`.
 Event: `hermes-install:manifest` / `:stage` / `:log` / `:done`.
+
+**`hermes_check_update` (10 Agu 2026)** menutup lubang yang bikin seluruh rantai distribusi ini percuma: VBOX tidak pernah membandingkan commit terpasang dengan yang ada di backend. Badge di Settings hanya menampilkan `.vbox_commit` lokal dan tombol Update selalu muncul tanpa syarat — jadi setiap kali tarball di-pack ulang, **tidak ada seorang pun yang diberi tahu**. Sekarang commit lokal dibandingkan dengan manifest; kalau beda, muncul badge kuning "Update tersedia → `<commit>`" dan tombol Update berubah jadi menonjol.
+
+Command ini sengaja mengembalikan `available: false` + `error` alih-alih gagal keras. Backend mati, belum login, atau tarball belum di-pack (503) bukan alasan untuk merusak kartu Hermes Engine — cukup jangan tampilkan tanda update. Kalau Hermes belum terpasang sama sekali, `available` juga selalu `false` supaya tombol Install dan Update tidak bersaing.
 
 ### VBOX Frontend (`v-box/src`)
 
@@ -212,7 +216,21 @@ dan `relay/hub.ts` semuanya baca sumber nyata (git, disk, env, DB). Yang menghal
 - [ ] **`HERMES_LLM_API_KEY` belum ada di `.env` server** (dicek langsung — yang ada cuma `DEEPSEEK_API_KEY` + `RELAY_NODE_TOKEN`). Akibatnya `/api/hermes/config` mengembalikan `env: {}` → VBOX melewati penulisan `.env` → install sukses tapi Hermes tidak bisa memanggil model. Isi juga `HERMES_LLM_PROVIDER` / `HERMES_LLM_MODEL` bila bukan default DeepSeek.
 - [x] ~~**Tarball di `storage/hermes/` sudah basi.**~~ **Beres 10 Agu 2026** — dan ternyata lebih parah dari dugaan: `storage/hermes/` di **produksi kosong sama sekali**, `pack-hermes.ts` belum pernah dijalankan di sana. `/api/hermes/manifest` membalas 503, artinya tombol "Install Agent" **tidak pernah berfungsi di produksi**; yang basi (commit `45a4396`) itu cuma salinan di mesin dev. Sekarang tarball commit `146b9aaa4a23` sudah terpasang dan manifest membalas 200.
 
-  ⚠️ **Server tidak bisa mem-pack sendiri.** Kunci SSH server tidak punya akses ke repo private `visualabs-id/custom-hermes` (`git ls-remote` → *"Please make sure you have the correct access rights"*), dan tidak ada checkout di sana. Tarball harus dibuat di mesin yang punya akses lalu di-`scp` ke `storage/hermes/`. Yang menahan otomatisasi ini cuma satu hal: **tambahkan kunci publik server sebagai deploy key di repo `custom-hermes`**, setelah itu `pack-hermes.ts` bisa jalan langsung di server dan langkah manual ini hilang.
+  ✅ **Server sekarang bisa mem-pack sendiri (10 Agu 2026).** Sebelumnya tidak: kunci SSH server tidak punya akses ke repo private `custom-hermes` sehingga tarball harus dibuat di mesin dev lalu di-`scp`. Sudah dibereskan dengan mengikuti pola deploy key per-repo yang memang sudah dipakai server ini:
+
+  - Kunci `~/.ssh/deploy_custom-hermes` (ed25519, tanpa passphrase) + alias SSH `github-custom-hermes` — sama persis polanya dengan `deploy_v-auto-backend` yang sudah ada.
+  - Kunci publiknya terdaftar sebagai **deploy key read-only** di `visualabs-id/custom-hermes`. Read-only disengaja: server tidak pernah perlu push.
+  - Checkout ada di `~/web/vims.dots.my.id/private/custom-hermes`, sejajar dengan `v-auto-backend`, sehingga `DEFAULT_REPO` (`../custom-hermes`) milik `pack-hermes.ts` langsung menemukannya tanpa `CUSTOM_HERMES_PATH`.
+
+  Rilis versi Hermes baru sekarang cukup:
+
+  ```bash
+  ssh Visualabs
+  cd ~/web/vims.dots.my.id/private/custom-hermes && git pull
+  cd ../v-auto-backend && bun run scripts/pack-hermes.ts
+  ```
+
+  Catatan: `git archive` **tidak** byte-identik antar mesin (gzip beda versi), jadi tarball hasil pack di server punya sha256 berbeda dari hasil pack di laptop meski commit-nya sama. Ini tidak merusak apa pun — cache VBOX membandingkan hash terhadap manifest, tidak cocok → unduh ulang.
 
   Catatan: `storage/hermes/` ada di `.gitignore`, jadi `git reset --hard` milik `deploy.sh` **tidak** menghapusnya — tarball selamat melewati deploy berikutnya.
 - [ ] **`RELAY_NODE_TOKEN` di `.env` masih token dev** (`dev-...`). Untuk production ganti nilai acak yang panjang. Perhatikan: VBOX mem-*fallback* ke literal `"rahasia123"` kalau field **Relay Node Token** di Settings kosong (`v-box/src-tauri/src/network/relay.rs:61`) — jadi pilih salah satu: set token beneran di tiap VBOX, atau pakai `RELAY_NODE_TOKENS` per-node. Jangan pernah menyetel token server jadi `rahasia123` supaya default itu "bekerja".
