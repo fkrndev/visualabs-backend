@@ -213,7 +213,7 @@ Tidak ada mock/dummy data di jalur ini: `pack-hermes.ts`, `routes/hermes.ts`, `r
 dan `relay/hub.ts` semuanya baca sumber nyata (git, disk, env, DB). Yang menghalangi deploy semata
 **konfigurasi yang belum diisi**, bukan kode yang belum jadi:
 
-- [ ] **`HERMES_LLM_API_KEY` belum ada di `.env` server** (dicek langsung — yang ada cuma `DEEPSEEK_API_KEY` + `RELAY_NODE_TOKEN`). Akibatnya `/api/hermes/config` mengembalikan `env: {}` → VBOX melewati penulisan `.env` → install sukses tapi Hermes tidak bisa memanggil model. Isi juga `HERMES_LLM_PROVIDER` / `HERMES_LLM_MODEL` bila bukan default DeepSeek.
+- [x] ~~**`HERMES_LLM_API_KEY` belum ada di `.env` server**~~ **Beres 10 Agu 2026 — lewat jalur berbeda.** Pemeriksaan ulang menunjukkan server ternyata **tidak punya key sama sekali**, termasuk `DEEPSEEK_API_KEY`, jadi LLM Gateway pun mati. Diselesaikan dengan memilih mode gateway (lihat bagian berikutnya): `DEEPSEEK_API_KEY` + `LLM_TEAM_TOKEN` dipasang di server, `HERMES_LLM_PROVIDER=custom`, dan `HERMES_LLM_API_KEY` **sengaja dibiarkan kosong** karena tidak ada key yang perlu mendarat di laptop siapa pun.
 - [x] ~~**Tarball di `storage/hermes/` sudah basi.**~~ **Beres 10 Agu 2026** — dan ternyata lebih parah dari dugaan: `storage/hermes/` di **produksi kosong sama sekali**, `pack-hermes.ts` belum pernah dijalankan di sana. `/api/hermes/manifest` membalas 503, artinya tombol "Install Agent" **tidak pernah berfungsi di produksi**; yang basi (commit `45a4396`) itu cuma salinan di mesin dev. Sekarang tarball commit `146b9aaa4a23` sudah terpasang dan manifest membalas 200.
 
   ✅ **Server sekarang bisa mem-pack sendiri (10 Agu 2026).** Sebelumnya tidak: kunci SSH server tidak punya akses ke repo private `custom-hermes` sehingga tarball harus dibuat di mesin dev lalu di-`scp`. Sudah dibereskan dengan mengikuti pola deploy key per-repo yang memang sudah dipakai server ini:
@@ -236,7 +236,34 @@ dan `relay/hub.ts` semuanya baca sumber nyata (git, disk, env, DB). Yang menghal
 - [ ] **`RELAY_NODE_TOKEN` di `.env` masih token dev** (`dev-...`). Untuk production ganti nilai acak yang panjang. Perhatikan: VBOX mem-*fallback* ke literal `"rahasia123"` kalau field **Relay Node Token** di Settings kosong (`v-box/src-tauri/src/network/relay.rs:61`) — jadi pilih salah satu: set token beneran di tiap VBOX, atau pakai `RELAY_NODE_TOKENS` per-node. Jangan pernah menyetel token server jadi `rahasia123` supaya default itu "bekerja".
 - [ ] **Rotate DeepSeek key** yang masih ter-commit di `custom-hermes/install-team.ps1:114` (nomor barisnya bergeser dari 101; key-nya masih ada dan tetap ada di riwayat git — rotasi, bukan sekadar hapus baris).
 
-### Inkonsistensi arsitektur LLM — perlu diputuskan sebelum rollout
+  **Satu-satunya blocker yang tersisa, dan sekarang jauh lebih murah diselesaikan.** Key yang dipasang di server 10 Agu 2026 adalah key yang sama dengan yang ter-commit itu — dikonfirmasi identik lewat perbandingan hash. Bedanya: sejak mode gateway aktif, key itu hidup **hanya di satu tempat**. Rotasi sekarang berarti mengganti satu baris di `.env` server lalu `pm2 restart vims` — tidak ada laptop yang perlu disentuh, tidak ada yang perlu install ulang.
+
+### ✅ Inkonsistensi arsitektur LLM — sudah diputuskan (10 Agu 2026)
+
+**Diambil: opsi 1, lewat gateway.** `HERMES_LLM_PROVIDER=custom` di server membuat
+`/api/hermes/config` mengirim `base_url: https://vims.dots.my.id/api/llm/v1` + `api_key`
+berisi `LLM_TEAM_TOKEN`, dan `env: {}` — **key DeepSeek tidak pernah keluar dari server**.
+Provider `custom` di Hermes memang tidak butuh env key (`plugins/model-providers/custom`:
+`env_vars=()` — *"No fixed key"*).
+
+Yang terpasang di produksi: `DEEPSEEK_API_KEY`, `LLM_TEAM_TOKEN` (48 hex), `HERMES_LLM_PROVIDER=custom`,
+`HERMES_LLM_MODEL=deepseek-chat`, `HERMES_LLM_BASE_URL`. `.env` lama dicadangkan ke `.env.bak-<timestamp>`.
+
+Diverifikasi end-to-end: `/api/llm/health` → `keyConfigured: true`; POST tanpa token → **401**;
+POST dengan token → balasan asli dari DeepSeek; `/api/hermes/config` → `mode: "gateway"`, `warning: null`.
+
+⚠️ **`LLM_TEAM_TOKEN` wajib diisi bersamaan dengan `DEEPSEEK_API_KEY`, bukan menyusul.** Gate di
+`llmGateway.ts` hanya aktif kalau token itu terisi — tanpa itu `/api/llm/v1` adalah proxy
+**terbuka** ke DeepSeek yang bisa dipakai siapa pun di internet dengan tagihan ke kita. Statusnya
+di `.env.example` sudah dinaikkan dari "opsional" jadi wajib.
+
+Konsekuensi untuk VBOX: `env` kosong sekarang punya dua arti berlawanan, jadi payload `/config`
+menambahkan `mode` (`gateway`/`direct`) dan `warning`. Tanpa itu VBOX memperingatkan user soal API
+key hilang padahal semuanya benar. `mode` default `direct` kalau backend belum mengirimnya, supaya
+server lama tetap berperilaku persis seperti dulu.
+
+<details>
+<summary>Catatan lama sebelum keputusan diambil</summary>
 
 `/api/llm` (LLM Gateway) dibuat supaya key DeepSeek asli **tidak pernah keluar dari server**: node
 cukup diarahkan `base_url` ke `<host>/api/llm/v1`. Tapi `config.yaml` yang ditulis `/api/hermes/config`
@@ -248,6 +275,8 @@ Pilih satu sebelum dibagikan ke tim:
 
 1. **Lewat gateway** (disarankan): `/config` menulis `base_url: <host>/api/llm/v1` + `LLM_TEAM_TOKEN`, `env` tidak berisi key asli. Key bisa dirotasi tanpa menyentuh laptop siapa pun.
 2. **Distribusi key**: pertahankan yang sekarang, tapi sadari tiap laptop memegang key yang bisa dipakai di luar jam kerja dan rotasi berarti semua orang harus re-install/re-configure.
+
+</details>
 
 ### Sebelum dipakai tim
 
