@@ -1,6 +1,7 @@
 # Tombol "Install Agent" di VBOX → Install `custom-hermes`
 
 **Status:** ✅ Terimplementasi 3 Agustus 2026 · panduan user ditambahkan 5 Agustus 2026 — **belum siap deploy**, lihat [§7 blocker](#blocker-deploy--audit-5-agustus-2026)
+**Uji lapangan pertama (Windows, 12 Agustus 2026): GAGAL — macet di stage `python`.** Instrumentasi diagnostik + tiga dugaan penyebab sudah diperbaiki; lihat [§10](#10-insiden-lapangan--instrumentasi-diagnostik-12-agustus-2026)
 **Keputusan:** distribusi lewat **tarball dari backend**
 **Repo terkait:** `v-box` (Tauri v2 + React), `v-auto-backend` (Bun + Hono), `custom-hermes` (fork `visualabs-id/custom-hermes` dari `NousResearch/hermes-agent`), `v-auto-frontend` (SvelteKit)
 **Dokumen terkait:** [run.md](run.md) — cara menjalankan Hermes + relay untuk dev local
@@ -202,6 +203,9 @@ Baris tebal itu asumsi paling kritis dari seluruh pendekatan ini, dan **diuji la
 - **Stage `config` sudah membuat `.env` dari template duluan.** `.env` harus di-**merge** (ganti key kita, pertahankan sisanya + komentar), bukan ditimpa.
 - **Route baru wajib di-mount sebelum `app.route("/", ...)`** di `src/index.ts` — ada middleware wildcard yang bocor ke route yang didaftarkan setelahnya.
 - **Extract jangan menghapus isi direktori lebih dulu** — `venv/` hasil install sebelumnya harus selamat supaya update tidak perlu build ulang dari nol.
+- **Prop callback inline (`onInstalled={() => …}`) jangan jadi dependency `useEffect` yang memasang listener.** Identitasnya berubah tiap parent re-render, listener dipasang ulang terus, dan setiap event tercatat berkali-kali. Lihat [§10](#10-insiden-lapangan--instrumentasi-diagnostik-12-agustus-2026).
+- **`listen()` itu async — cleanup bisa jalan sebelum promise-nya resolve.** Tanpa flag `disposed`, unlistener yang datang belakangan tidak pernah dipanggil dan listener-nya hidup selamanya.
+- **Event Tauri fire-and-forget.** UI yang murni digerakkan event akan tersangkut permanen kalau satu event hilang. Selalu sediakan polling status sebagai jaring pengaman.
 
 ---
 
@@ -286,7 +290,7 @@ Pilih satu sebelum dibagikan ke tim:
 ### Pengujian yang belum dilakukan
 
 - [ ] **Install E2E penuh di macOS ARM mesin bersih** — belum pernah dijalankan sampai tuntas; memasang uv/Python/Node/Chromium sungguhan
-- [ ] Windows 11 mesin bersih (jalur `install.ps1` sama sekali belum disentuh runtime-nya)
+- [x] ~~Windows 11 mesin bersih~~ — **dijalankan 12 Agustus 2026, macet di stage `python`.** Lihat [§10](#10-insiden-lapangan--instrumentasi-diagnostik-12-agustus-2026). Perlu diulang setelah perbaikan.
 - [ ] Install ulang di atas instalasi yang sudah ada → harus jadi update, bukan error
 - [ ] Cancel di tengah stage → retry harus tetap bisa jalan
 - [ ] Internet putus di tengah download → pesan jelas, bukan hang
@@ -299,7 +303,7 @@ Pilih satu sebelum dibagikan ke tim:
 | Risiko | Dampak | Mitigasi |
 |---|---|---|
 | `install.sh` belum teruji penuh di macOS ARM | Install gagal di separuh tim | Baru stage `config` + `--manifest` yang diuji; stage berat (`venv`, `python-deps`, `node-deps`) belum |
-| Jalur Windows belum dijalankan sama sekali | Gagal di mayoritas user | Argumen `install.ps1` ditulis dari pembacaan kode, bukan dari eksekusi |
+| Jalur Windows macet di uji pertama | Gagal di mayoritas user | Tiga dugaan penyebab sudah ditutup + log persist ditambahkan (§10). **Penyebab pastinya belum terkonfirmasi** — butuh satu run ulang yang menghasilkan berkas log |
 | Antivirus Windows mengarantina `uv.exe` | Install gagal | Terdokumentasi upstream (`README.md:78-100`); pertimbangkan deteksi + instruksi whitelist |
 | Tarball 69 MB per download | Boros bandwidth kalau sering update | Sudah di-cache per-commit di `$HERMES_HOME/bootstrap-cache`, dilewati kalau sha256 cocok |
 | Backend jadi titik tunggal distribusi | Backend mati = tidak bisa install | Belum ada fallback bundled |
@@ -312,3 +316,106 @@ Pilih satu sebelum dibagikan ke tim:
 2. Perlu tombol **Uninstall**? (`custom-hermes/hermes_cli/uninstall.py` sudah ada)
 3. Perlu auto-update Hermes (`hermes update`), atau install manual saja tiap rilis?
 4. Kalau user sudah punya Hermes hasil install manual — sekarang `which_hermes()` mendeteksi dan memakainya. Cukup, atau mau dipaksa ke lokasi standar?
+
+---
+
+## 10. Insiden lapangan & instrumentasi diagnostik (12 Agustus 2026)
+
+### Yang terjadi
+
+Uji pertama di mesin tim (**Windows**, jalur `install.ps1`) macet. Modal berhenti di
+stage `python` — spinner berputar tanpa akhir, tidak ada pesan error, tidak ada progres
+ke stage berikutnya (`git`).
+
+Dua hal terbaca dari tangkapan layarnya:
+
+1. Stage `python` **sudah selesai dengan sukses**. Frame hasilnya sudah tercetak:
+   `{"skipped":false,"ok":true,"reason":null,"duration_ms":165,"stage":"python"}`
+2. **Setiap baris log muncul dua kali** — persis dua, termasuk frame JSON di atas,
+   dengan `duration_ms` yang identik.
+
+Poin 2 memastikan ini bukan dua proses installer yang jalan bersamaan (dua proses
+terpisah tidak mungkin menghasilkan `duration_ms` yang sama persis) melainkan **satu
+proses dengan dua listener di frontend**.
+
+### Kenapa kita buta
+
+Masalah sebenarnya bukan stage `python`-nya, tapi bahwa **tidak ada satu pun cara untuk
+tahu di mana macetnya**:
+
+- Seluruh jejak install hanya hidup di dalam modal. User menutup VBOX → semua hilang.
+  Tidak ada yang bisa dikirim ke kita.
+- Spinner tidak membedakan "sedang mengunduh Chromium 300 MB" dari "menggantung
+  selamanya". Dua keadaan yang sangat berbeda tampil identik.
+- Tidak ada timeout. Proses yang menggantung akan menggantung sampai kiamat.
+- UI sepenuhnya digerakkan event. Event Tauri fire-and-forget — satu yang hilang,
+  checklist tersangkut permanen meski installernya jalan terus.
+
+### Akar masalah yang ditemukan & ditutup
+
+| # | Temuan | Bukti | Perbaikan |
+|---|---|---|---|
+| 1 | Listener dobel di `HermesInstallModal` | Log muncul 2× dengan `duration_ms` identik | `onInstalled` dipindah ke `useRef` (bukan dependency `useEffect`); flag `disposed` menutup race `listen()` async vs cleanup |
+| 2 | `stdin` di-inherit dari proses GUI | Dibaca dari kode — VBOX tidak punya konsol, jadi prompt apa pun menggantung tanpa batas | `Stdio::null()` + PowerShell dijalankan dengan `-NonInteractive -NoProfile` |
+| 3 | Menunggu EOF pipe, bukan matinya proses | Dibaca dari kode — proses turunan (`winget`, `npm`, `uv`) mewarisi handle stdout dan menahannya hidup setelah induknya `exit` | Saat sunyi, `try_wait()` dicek; kalau prosesnya sudah keluar, berhenti membaca alih-alih menunggu EOF yang tidak akan datang |
+
+**Penting: mana yang benar-benar menyebabkan macet belum terkonfirmasi.** Temuan 1 pasti
+nyata (ada buktinya di tangkapan layar) tapi ia hanya menjelaskan log dobel — bukan
+macetnya. Temuan 2 dan 3 murni dari pembacaan kode: dua-duanya *bisa* menghasilkan gejala
+persis seperti yang terlihat, dan dua-duanya salah terlepas dari insiden ini, jadi
+ditutup. Run ulang yang menghasilkan berkas log-lah yang akan memutuskan.
+
+### Instrumentasi yang ditambahkan
+
+**Berkas log persist** — `$HERMES_HOME/logs/vbox-install-<YYYYMMDD-HHMMSS>.log`, satu per
+run. Memuat header lingkungan (versi VBOX, OS/arch, path, interpreter), **perintah persis**
+yang dijalankan tiap stage, setiap baris stdout/stderr ber-timestamp, tiap perpindahan
+stage, exit code per stage, dan baris penutup `INSTALL SELESAI` / `INSTALL GAGAL`. Inilah
+yang diminta dari tim kalau gagal lagi.
+
+**Watchdog + timeout idle** — berbasis diam, bukan durasi total (`node-deps` sah makan 15
+menit selama masih mencetak progress):
+
+- tiap 30 detik sunyi → baris "masih menjalankan '<stage>' — N tanpa output baru"
+- 10 menit sunyi → proses dibunuh, stage ditandai gagal dengan sebab yang jelas
+- bisa disetel lewat `VBOX_HERMES_IDLE_TIMEOUT_SECS`
+
+**Polling status sebagai jaring pengaman** — modal memanggil `hermes_install_status` tiap
+2 detik, tidak lagi hanya mengandalkan event. Ini menyembuhkan seluruh kelas bug
+"event hilang": stage yang tertinggal di `running` dikoreksi sendiri, dan install yang
+berakhir tanpa event `done` tidak lagi menggantungkan UI selamanya.
+
+**Angka umur & diam di UI** — "Stage `python` berjalan 3 menit 12 detik — diam 2 menit 5
+detik. Dihentikan otomatis kalau menembus 10 menit." Membuat lambat vs macet bisa
+dibedakan tanpa membaca log.
+
+**Tombol "Buka Log"** — jatuh ke log terbaru di disk kalau belum ada run di sesi ini,
+karena kegagalan kemarin justru yang paling ingin dilihat.
+
+### Berkas yang berubah
+
+| Berkas | Perubahan |
+|---|---|
+| `v-box/src-tauri/src/features/hermes_install.rs` | log persist, watchdog, idle timeout, `stdin` null, `-NoProfile -NonInteractive`, deteksi proses-mati-pipe-terbuka, status diperkaya, command `hermes_install_log_path` |
+| `v-box/src-tauri/src/lib.rs` | daftarkan `hermes_install_log_path` |
+| `v-box/src/components/HermesInstallModal.tsx` | fix listener dobel + race cleanup, polling status, indikator umur/diam, tombol "Buka Log" |
+
+### Verifikasi
+
+| Yang diuji | Cara | Hasil |
+|---|---|---|
+| Kompilasi Rust | `cargo check` | ✅ bersih, tanpa warning |
+| Unit test | `cargo test --lib hermes_install` | ✅ 8/8 lolos (+1 test baru `fmt_dur`) |
+| Tipe frontend | `npx tsc --noEmit` | ✅ bersih |
+| Perilaku watchdog/timeout/log di Windows | — | ❌ **belum diuji runtime sama sekali** |
+
+Yang di atas hanya membuktikan kodenya benar secara statis. Tidak satu pun jalur baru ini
+pernah dieksekusi di Windows.
+
+### Langkah berikutnya
+
+1. Build ulang VBOX, minta satu orang tim mengulang install.
+2. Kalau gagal lagi — minta berkas `vbox-install-*.log`-nya. Sekarang isinya cukup untuk
+   menunjuk stage, perintah, dan baris terakhir sebelum macet.
+3. Kalau ternyata lolos — catat penyebab pastinya di tabel akar masalah di atas, ganti
+   "belum terkonfirmasi" dengan temuan sebenarnya.
