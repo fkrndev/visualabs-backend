@@ -1,7 +1,7 @@
 # Tombol "Install Agent" di VBOX → Install `custom-hermes`
 
 **Status:** ✅ Terimplementasi 3 Agustus 2026 · panduan user ditambahkan 5 Agustus 2026 — **belum siap deploy**, lihat [§7 blocker](#blocker-deploy--audit-5-agustus-2026)
-**Uji lapangan pertama (Windows, 12 Agustus 2026): GAGAL — macet di stage `python`.** Instrumentasi diagnostik + tiga dugaan penyebab sudah diperbaiki; lihat [§10](#10-insiden-lapangan--instrumentasi-diagnostik-12-agustus-2026)
+**Uji lapangan (Windows):** ke-1 12 Agu → [§10](#10-insiden-lapangan--instrumentasi-diagnostik-12-agustus-2026) · ke-2 13 Agu → [§11](#11-uji-lapangan-kedua--13-agustus-2026-vbox-0180-windows) · **ke-3 13 Agu: akar masalahnya ketemu — jendela VBOX yang beku ("Not Responding"), installernya sendiri tidak pernah macet** → [§12](#12-penyebabnya-ketemu--ui-beku-bukan-installer-macet-13-agustus-2026)
 **Keputusan:** distribusi lewat **tarball dari backend**
 **Repo terkait:** `v-box` (Tauri v2 + React), `v-auto-backend` (Bun + Hono), `custom-hermes` (fork `visualabs-id/custom-hermes` dari `NousResearch/hermes-agent`), `v-auto-frontend` (SvelteKit)
 **Dokumen terkait:** [run.md](run.md) — cara menjalankan Hermes + relay untuk dev local
@@ -72,7 +72,7 @@ Jalur lama membundel `hermes_engine` (PyInstaller) ke dalam `.app`/`.exe`. Dibua
 │ 3. extract → $HERMES_HOME/hermes-agent                   │
 │ 4. install.sh --manifest → daftar stage                  │
 │ 5. tiap stage: --stage X --non-interactive --json        │
-│    (repository / setup / gateway / desktop DILEWATI)     │
+│    (repository/desktop + stage interaktif DILEWATI)      │
 │ 6. GET /api/hermes/config → tulis config.yaml + .env     │
 └──────────────┬───────────────────────────────────────────┘
                │ bash (Unix) / powershell.exe (Windows)
@@ -91,7 +91,7 @@ Jalur lama membundel `hermes_engine` (PyInstaller) ke dalam `.app`/`.exe`. Dibua
 **Stage yang ditampilkan ke user:**
 `vbox-download` → `vbox-extract` → `prerequisites` → `venv` → `python-deps` → `node-deps` → `path` → `config` → `vbox-configure` → `complete`
 
-Yang dilewati: `repository` (source dari tarball), `setup`/`gateway` (butuh input interaktif — config ditulis VBOX sendiri), `desktop` (butuh `--include-desktop`).
+Yang dilewati: `repository` (source dari tarball) dan `desktop` (butuh `--include-desktop`) berdasarkan nama; ditambah **semua stage ber-`needs_user_input: true`** berdasarkan manifest — config-nya ditulis VBOX sendiri di `vbox-configure`. Nama stage interaktif berbeda antar-platform (`setup` di `install.sh`, `configure` di `install.ps1`), jadi jangan pernah menyaringnya lewat daftar nama; lihat [§11](#11-uji-lapangan-kedua--13-agustus-2026-vbox-0180-windows).
 
 ---
 
@@ -419,3 +419,150 @@ pernah dieksekusi di Windows.
    menunjuk stage, perintah, dan baris terakhir sebelum macet.
 3. Kalau ternyata lolos — catat penyebab pastinya di tabel akar masalah di atas, ganti
    "belum terkonfirmasi" dengan temuan sebenarnya.
+
+---
+
+## 11. Uji lapangan kedua — 13 Agustus 2026 (VBOX 0.1.80, Windows)
+
+Run ini menghasilkan berkas log yang lengkap, jadi untuk pertama kalinya kita bisa melihat
+apa yang sebenarnya terjadi.
+
+### Kemajuan besar
+
+Macet di stage `python` yang jadi pemicu §10 **tidak terulang**. Seluruh prereq lolos dan
+sebagian besar install berhasil:
+
+| Stage | Durasi | Hasil |
+|---|---|---|
+| `vbox-download` | 2 dtk | ✅ tarball dari cache (sha256 cocok) |
+| `vbox-extract` | 84 dtk | ✅ 7630 file |
+| `uv` · `python` · `git` · `node` · `system-packages` | 7,9 / 1,3 / 5,7 / 0,2 / 4,4 dtk | ✅ semua |
+| `venv` | 17,5 dtk | ✅ Python 3.11.15 |
+| `dependencies` | — | ⛔ **berhenti di sini** |
+
+uv sempat menyelesaikan pekerjaannya: `Prepared 99 packages in 2m 16s` → `Installed 99
+packages in 20.43s` → daftar 99 paket tercetak pada 14:57:14. Yang seharusnya menyusul
+adalah `[OK] Main package installed (hash-verified via uv.lock)` lalu frame JSON —
+keduanya instan, bukan pekerjaan berat. Log berhenti tepat di situ.
+
+### Yang justru mencurigakan: watchdog-nya diam
+
+Watchdog terbukti bekerja di run yang sama — ada `… masih menjalankan 'dependencies' — 32
+detik tanpa output baru` pada 14:56:23. Tapi setelah 14:57:14 **tidak ada heartbeat sama
+sekali**, padahal kalau prosesnya benar-benar menggantung harusnya muncul pada ~14:57:44,
+dan setelah 10 menit prosesnya dibunuh dengan pesan yang jelas.
+
+Diamnya watchdog menyisakan tiga kemungkinan:
+
+1. Log disalin kurang dari 30 detik setelah baris terakhir — install sebenarnya masih jalan.
+2. VBOX ditutup atau mati di titik itu.
+3. Installer terus mengirim **baris kosong**: `emit_log` membuangnya sebelum menulis ke
+   berkas, tapi loop pembacanya tetap menganggapnya tanda hidup. Timer watchdog ter-reset
+   terus, heartbeat tak pernah berbunyi, idle timeout tak pernah tercapai.
+
+**Nomor 3 adalah cacat di instrumentasi §10 itu sendiri** — persis kelas kegagalan yang
+tidak terlihat sama sekali, dan bisa saja ia pula yang menjelaskan §10. Sudah diperbaiki.
+
+> **Menyusul — dugaan di atas keliru.** Run ketiga membuktikan jawabannya nomor 2, dalam
+> bentuk yang tidak terpikirkan di sini: jendela VBOX-nya yang membeku, sementara
+> installernya jalan terus. Lihat [§12](#12-penyebabnya-ketemu--ui-beku-bukan-installer-macet-13-agustus-2026).
+> Perbaikan baris-kosong tetap dipertahankan karena cacatnya nyata, tapi ia **bukan** akar
+> masalah yang dicari.
+
+### Perbaikan
+
+| Temuan | Perbaikan |
+|---|---|
+| Baris kosong me-reset watchdog dan tidak tercatat di mana pun | Hanya baris yang tidak kosong (setelah strip ANSI) yang dihitung sebagai tanda hidup; baris kosong dihitung terpisah |
+| Heartbeat tidak bisa membedakan "benar-benar diam" dari "mengeluarkan sampah yang kita buang" | Heartbeat sekarang mencetak jumlah baris + jumlah baris kosong yang diabaikan |
+| **`SKIPPED_STAGES` meleset di Windows** — manifest `install.ps1` menamai stage interaktif `configure`, sementara daftarnya menyebut `setup` (nama milik `install.sh`) | Filter pindah ke `needs_user_input` dari manifest; daftar nama tinggal `repository` + `desktop` |
+
+Soal bug Windows itu: akibatnya VBOX menjalankan `Stage-Configure` (wizard API key) di
+setiap install Windows. **Tidak menyebabkan hang** — `Invoke-SetupWizard` menghormati
+`-NonInteractive` dan keluar lebih awal — tapi user melihat stage yang seolah bekerja
+padahal tidak melakukan apa pun, dan itu menutupi kenyataan bahwa konfigurasi sebenarnya
+ditulis VBOX di `vbox-configure`. Dua test baru mengunci perilakunya memakai manifest
+asli dari kedua platform.
+
+### Verifikasi
+
+| Yang diuji | Hasil |
+|---|---|
+| `cargo check` | ✅ bersih (2 warning pre-existing di `browser/launch.rs`, bukan dari jalur ini) |
+| `cargo test --lib hermes_install` | ✅ 10/10 (2 test baru untuk `filter_stages`) |
+| Perilaku baru di Windows | ❌ belum dieksekusi |
+
+### Yang masih menggantung
+
+**Penyebab berhentinya `dependencies` belum terkonfirmasi.** Yang menentukan: apakah log
+itu disalin saat modal masih berputar (berarti kemungkinan 1 — install masih jalan dan
+mungkin akhirnya selesai), atau setelah ditunggu lama (berarti kemungkinan 3, dan
+perbaikan di atas akan membuktikannya di run berikutnya).
+
+Kandidat lain yang belum tersingkir: Windows Defender memindai 99 paket yang baru ditulis
+ke disk — bisa memakan menit dan sepenuhnya sunyi. Heartbeat yang sekarang akan
+membedakannya dari hang sejati.
+
+---
+
+## 12. Penyebabnya ketemu — UI beku, bukan installer macet (13 Agustus 2026)
+
+Tangkapan layar run ketiga menyelesaikan teka-teki §10 dan §11 sekaligus. Judul jendelanya:
+
+```
+VBOX (Not Responding)
+```
+
+**Installernya tidak pernah macet. Yang beku jendela VBOX-nya.** Dan begitu UI beku,
+spinner berhenti berputar serta checklist berhenti diperbarui — jadi install yang masih
+berjalan normal di background terlihat persis seperti hang. Itulah gejala yang tiga kali
+dilaporkan sebagai "loading tidak selesai-selesai".
+
+Ini juga menjelaskan kejanggalan §11 (log berhenti tanpa heartbeat sama sekali): berkas
+lognya tidak berhenti — yang dikirim ke kita cuma potongan sampai detik user menyalinnya
+saat UI membeku. Dugaan "baris kosong me-reset watchdog" ternyata **bukan** penyebabnya.
+Perbaikannya tetap dipertahankan karena cacatnya nyata, tapi jangan dicatat sebagai
+akar masalah.
+
+Run ini juga membuktikan install berjalan jauh lebih dalam dari yang terlihat: `venv` →
+`dependencies` → `node-deps` → `path` semuanya ✅, dan saat tangkapan layar diambil
+`config-templates` sedang menyinkronkan skill.
+
+### Dua sumber beban
+
+| # | Sumber | Kenapa berat |
+|---|---|---|
+| 1 | **Satu event IPC per baris log** | Stage cerewet memuntahkan ratusan baris dalam sekejap (daftar 99 paket uv, sinkronisasi skill). Tiap event memicu `setLogs` → React me-render ulang **seluruh** daftar log. Ratusan render penuh per detik membekukan webview. |
+| 2 | **Berkas log dibuka-tutup untuk SETIAP baris** | Di Windows tiap `open` melewati filter antivirus. Ratusan baris berturut-turut = ratusan pemindaian, cukup untuk menyendat task pembaca output. |
+
+Sumber 2 adalah cacat yang **diperkenalkan sendiri oleh instrumentasi §10** — log persist
+yang dimaksudkan untuk mendiagnosis kebekuan justru ikut memperparahnya di Windows.
+
+### Perbaikan
+
+| Lapis | Perubahan |
+|---|---|
+| Rust — pembaca output | Antrean dikosongkan sekaligus (`try_recv` sampai kering, maks 200 baris), bukan diproses satu per satu |
+| Rust — event | `emit_logs` mengirim **array** baris dalam satu event; `emit_log` tinggal pembungkus satu elemen |
+| Rust — berkas log | Handle dibuka sekali di awal run dan ditahan di `RUN_LOG_FILE`, bukan `OpenOptions::open` per baris |
+| Frontend | Baris ditampung di ref, di-flush ke state maksimal sekali per 150 ms |
+| Frontend | Buffer DOM 400 → 300 baris (yang lengkap tetap ada di berkas log) |
+
+Watchdog sekarang berpatokan pada baris bermakna yang **terbaca**, bukan yang jadi
+ditampilkan — saat mode `quiet` seluruh stdout hanya masuk berkas, dan itu tetap tanda
+prosesnya hidup.
+
+### Verifikasi
+
+| Yang diuji | Hasil |
+|---|---|
+| `cargo test --lib hermes_install` | ✅ 10/10 |
+| `npx tsc --noEmit` | ✅ bersih |
+| Bebas-beku di Windows saat stage cerewet | ❌ **belum diuji** — ini yang harus dibuktikan run berikutnya |
+
+### Catatan untuk run berikutnya
+
+Yang membuktikan perbaikan ini berhasil bukan "install selesai", melainkan **jendela tetap
+responsif selama `dependencies` dan `config-templates`**. Kalau masih membeku, sumber
+beban ketiga yang belum tersentuh: `hermes_install_status` di-poll tiap 2 detik dan setiap
+balasannya memicu render — jauh lebih ringan dari log, tapi belum diukur.
