@@ -33,6 +33,23 @@ function nodeTokenValid(nodeId: string, token: string): boolean {
 	return !!SHARED_NODE_TOKEN && token === SHARED_NODE_TOKEN;
 }
 
+/**
+ * Alasan penolakan — buat log saja, TIDAK pernah dikirim ke node.
+ *
+ * Node yang ditolak cuma menerima `1008 unauthorized`, jadi dari sisi node
+ * "token saya salah" dan "server belum punya token sama sekali" terlihat
+ * identik — dan yang kedua itu salah konfigurasi server, bukan salah user.
+ * Tanpa baris ini keduanya sama-sama senyap di kedua ujung.
+ */
+function rejectReason(nodeId: string, token: string): string {
+	if (!nodeId) return "node_id kosong";
+	if (PER_NODE_TOKENS[nodeId]) return "token tidak cocok dengan entry RELAY_NODE_TOKENS node ini";
+	if (!SHARED_NODE_TOKEN)
+		return "RELAY_NODE_TOKEN belum diset di server — semua node akan ditolak apa pun tokennya";
+	if (!token) return "node tidak mengirim token";
+	return "token tidak cocok dengan RELAY_NODE_TOKEN";
+}
+
 // ── Daftar node online (buat dropdown "pilih Hermes server" di FE) ──────────
 router.get("/nodes", requireAuthWithFallback, async (c) => {
     return c.json({ success: true, data: await hub.listNodes() });
@@ -50,6 +67,9 @@ router.get(
         return {
             onOpen(_evt, ws) {
                 if (!nodeId || !nodeTokenValid(nodeId, token)) {
+                    console.warn(
+                        `[relay] node '${nodeId || "(kosong)"}' ditolak: ${rejectReason(nodeId, token)}`,
+                    );
                     ws.close(1008, "unauthorized");
                     return;
                 }

@@ -244,7 +244,8 @@ WS lama ditutup, semua channel di-cancel, loop reconnect ngambil config baru.
 | Gejala | Sebabnya | Fix |
 |---|---|---|
 | `[relay-node] not configured` | env `HUB_URL`/`NODE_ID`/`NODE_TOKEN` ada yang kosong | cek `relay-dev.env` kebaca (harus di root `custom-hermes/`) |
-| Node connect lalu langsung disconnect, loop backoff | token gak cocok → hub `ws.close(1008, "unauthorized")` | samakan `HERMES_RELAY_NODE_TOKEN` ↔ `RELAY_NODE_TOKEN`; kalau pakai `RELAY_NODE_TOKENS`, entry per-node yang menang |
+| Node connect lalu langsung disconnect, loop backoff | token gak cocok → hub `ws.close(1008, "unauthorized")` | samakan `HERMES_RELAY_NODE_TOKEN` ↔ `RELAY_NODE_TOKEN`; kalau pakai `RELAY_NODE_TOKENS`, entry per-node yang menang. Alasan persisnya ada di log server: `[relay] node 'node-N' ditolak: ...` |
+| Semua node ditolak, padahal token di VBOX udah bener | `RELAY_NODE_TOKEN` kosong di server → `nodeTokenValid()` selalu `false`, token apa pun ditolak | set `RELAY_NODE_TOKEN` di env server relay. Node cuma nerima `1008 unauthorized` tanpa alasan, jadi ini cuma kelihatan dari log server |
 | FE dapat `node 'node-5' tidak online` | node belum register di hub | cek `GET /api/relay/nodes`, cek log Terminal 2 |
 | Chat nyambung tapi langsung ketutup | channel ke `/api/ws` lokal ditolak 4401 | `HERMES_RELAY_LOCAL_TOKEN` harus == `HERMES_DASHBOARD_SESSION_TOKEN` |
 | `Address already in use :9119` | ada Hermes lama nyangkut | `hermes serve --status` lalu `hermes serve --stop`, atau `lsof -ti tcp:9119 \| xargs kill -9` |
