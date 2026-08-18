@@ -291,6 +291,15 @@ reason kosong). Sudah ditambal: kedua env sekarang disuntik di jalur spawn juga.
 Buat mesin yang terlanjur, samakan manual di `~/.hermes/.env` (Windows:
 `%USERPROFILE%\.hermes\.env`) lalu restart Hermes.
 
+**Tombol "Sinkronkan Config" (18 Agu 2026).** Kalau yang salah cuma config —
+model keliru, base URL gateway berubah, atau `config.yaml` memang tidak pernah
+ditulis karena install tersendat — jangan suruh siapa pun install ulang. Tombol
+itu memanggil `hermes_sync_config`, yang menulis `config.yaml` + `.env` dari
+`GET /api/hermes/config` dalam hitungan detik tanpa menyentuh dependency.
+Hasilnya identik dengan stage `vbox-configure`. Artinya juga: mengubah
+`HERMES_LLM_*` di server cukup diikuti satu klik di tiap laptop, bukan install
+ulang 5-15 menit.
+
 Buat instalasi Hermes-nya sendiri lewat tombol "Install Agent", lihat
 [install-hermes.md](install-hermes.md).
 
