@@ -279,6 +279,18 @@ sendiri dan nyuntik env `HERMES_RELAY_*` dari Settings
 - `local_token` default `rahasia123` juga, jadi kalau nge-tes VBOX + backend dev,
   set `RELAY_NODE_TOKEN=rahasia123` di backend biar gak usah ngutak-ngatik Settings.
 
+**Catatan 18 Agu 2026 — jalur spawn VBOX sempat pincang.** `start_hermes_with_relay()`
+di `v-box/src-tauri/src/lib.rs` nyuntik `HERMES_RELAY_LOCAL_TOKEN` tapi **lupa**
+`HERMES_DASHBOARD_SESSION_TOKEN`, padahal jalur "Install Agent"
+([hermes_install.rs](../../../v-box/src-tauri/src/features/hermes_install.rs)) nulis
+dua-duanya ke `~/.hermes/.env`. Akibatnya, di mesin yang `~/.hermes/.env`-nya belum
+punya key itu, Hermes mengarang session token acak tiap start → node-agent 401 di
+`/api/ws` → `{t:"c"}` ke relay → **browser lihat "tersambung → terputus" tiap detik
+tanpa pesan error apa pun** (relay nutup pakai `client.close()` polos = code 1000,
+reason kosong). Sudah ditambal: kedua env sekarang disuntik di jalur spawn juga.
+Buat mesin yang terlanjur, samakan manual di `~/.hermes/.env` (Windows:
+`%USERPROFILE%\.hermes\.env`) lalu restart Hermes.
+
 Buat instalasi Hermes-nya sendiri lewat tombol "Install Agent", lihat
 [install-hermes.md](install-hermes.md).
 
