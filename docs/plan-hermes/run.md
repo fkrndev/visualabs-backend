@@ -291,6 +291,17 @@ reason kosong). Sudah ditambal: kedua env sekarang disuntik di jalur spawn juga.
 Buat mesin yang terlanjur, samakan manual di `~/.hermes/.env` (Windows:
 `%USERPROFILE%\.hermes\.env`) lalu restart Hermes.
 
+**Pembagian tugas baru di Windows (18 Agu 2026).** VBOX tidak lagi menggendong
+seluruh install. Ia mengunduh tarball + ekstrak (hanya dia yang punya token
+backend), lalu membuka **jendela terminal sendiri** untuk sisanya — uv, Python,
+Node, Chromium. Jendela itu tidak diikuti VBOX: tak ada pipe yang dibaca, tak
+ada watchdog. Menutup VBOX di tengah jalan tidak membatalkan apa pun. Sesudah
+terminalnya selesai, kembali ke VBOX dan klik "Sinkronkan Config".
+
+Alasannya empiris: install lewat terminal mulus, install lewat VBOX membeku
+("Not Responding"), padahal perintah dan mesinnya sama. Selama UI dan install
+5-15 menit berbagi satu proses, tambalan apa pun cuma mengurangi gejala.
+
 **Tombol "Sinkronkan Config" (18 Agu 2026).** Kalau yang salah cuma config —
 model keliru, base URL gateway berubah, atau `config.yaml` memang tidak pernah
 ditulis karena install tersendat — jangan suruh siapa pun install ulang. Tombol
