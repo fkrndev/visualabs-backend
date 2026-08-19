@@ -19,6 +19,42 @@ import { inArray, eq } from "drizzle-orm";
 
 export type NodeSummary = { id: string; label: string; online: boolean; sessions: number };
 
+/**
+ * Bentuk `node_id`: `node-{userId}` atau `node-{userId}-{namaMesin}`.
+ *
+ * Akhiran mesin ditambahkan supaya satu orang bisa memakai lebih dari satu
+ * laptop. Tanpa itu keduanya mendaftar dengan id yang sama, dan
+ * `registerNode()` memperlakukan pendaftaran kedua sebagai "node yang sama
+ * connect ulang" — menutup yang pertama berikut seluruh channel-nya. Hasilnya
+ * dua laptop saling menendang tanpa henti, bukan sekadar salah satu kalah.
+ *
+ * Bentuk lama tetap diterima: VBOX versi lama masih mengirimkannya, dan node
+ * yang tidak bisa membaca nama mesinnya sendiri sengaja jatuh ke sana.
+ */
+export const NODE_ID_RE = /^node-(\d+)(?:-([a-z0-9-]+))?$/;
+
+/**
+ * Label yang tampil di dropdown "pilih Hermes server".
+ *
+ * Dipisah dari `listNodes()` supaya bisa diuji tanpa database — logikanya
+ * kecil tapi bercabang tiga, dan salahnya baru ketahuan sebagai dropdown
+ * membingungkan di produksi.
+ */
+export function nodeDisplayLabel(nodeId: string, rawLabel: string, userName?: string): string {
+    if (!userName) return rawLabel;
+
+    // Nama mesin ditempel HANYA kalau id-nya memang membawa akhiran mesin,
+    // supaya node lama (`node-5`) tampil persis seperti dulu.
+    const hasMachine = !!NODE_ID_RE.exec(nodeId)?.[2];
+    if (!hasMachine) return userName;
+
+    // `rawLabel` jatuh ke nodeId kalau node tidak mengirim label; menempelkan
+    // itu cuma mengulang id yang sudah tampil di tempat lain.
+    if (!rawLabel || rawLabel === nodeId) return userName;
+
+    return `${userName} · ${rawLabel}`;
+}
+
 export interface ClientHandle {
     ch: string;
     send: (data: string) => void;
@@ -72,7 +108,7 @@ class RelayHub {
         const nodes = [...this.nodes.values()];
         // Resolve user names from DB for node IDs matching "node-{userId}"
         const userIds = nodes
-            .map((n) => n.nodeId.match(/^node-(\d+)$/)?.[1])
+            .map((n) => NODE_ID_RE.exec(n.nodeId)?.[1])
             .filter((id): id is string => !!id)
             .map(Number);
 
@@ -90,12 +126,13 @@ class RelayHub {
         }
 
         return nodes.map((n) => {
-            const match = n.nodeId.match(/^node-(\d+)$/);
+            const match = NODE_ID_RE.exec(n.nodeId);
             const userId = match ? Number(match[1]) : null;
             const userName = userId ? nameMap.get(userId) : undefined;
+            const label = nodeDisplayLabel(n.nodeId, n.label, userName);
             return {
                 id: n.nodeId,
-                label: userName || n.label,
+                label,
                 online: true,
                 sessions: n.channels.size,
             };

@@ -398,9 +398,7 @@ Dua tambahan aditif di `hermes_cli/web_server.py`, tidak mengubah perilaku yang 
 1. `GET /api/skills` → field baru `usage_detail: {use, view, patch, last_used_at}` di samping `usage` yang lama. Tanpa ini peringkat "paling sering dipakai" ikut menghitung sekadar-dibuka.
 2. `GET /api/skills/content` → field baru `extra_file_count`, jumlah berkas selain `SKILL.md` di direktori skill. Tanpa ini tidak ada cara mendeteksi skill berkas jamak dari sisi VIMS, dan skill akan tersalin dalam keadaan rusak tanpa peringatan.
 
-✅ **Sudah tersalur (10 Agu 2026).** Tarball commit `146b9aaa4a23` terpasang di produksi, `/api/hermes/manifest` membalas 200. Sebelum ini `storage/hermes/` di server kosong — lihat [install-hermes.md §7](install-hermes.md) untuk kenapa tarball harus dibuat di mesin dev dulu, bukan di server.
-
-Sampai seseorang memasang/memperbarui agent-nya, mesin yang masih memakai Hermes lama tetap jalan tapi terdegradasi: peringkat usage memakai angka gabungan, dan penjaga berkas-jamak tidak aktif (`extra_file_count` undefined → dianggap 0). Dua-duanya gagal dengan aman, bukan error.
+⚠️ Keduanya ikut tersalur ke tim lewat **tarball**, jadi butuh `bun run scripts/pack-hermes.ts` dijalankan ulang di server. Sampai itu terjadi, VIMS tetap jalan tapi terdegradasi: peringkat usage memakai angka gabungan, dan penjaga berkas-jamak tidak aktif (`extra_file_count` undefined → dianggap 0).
 
 ### 11.3 Yang dibangun
 
