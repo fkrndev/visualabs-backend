@@ -310,9 +310,13 @@ install, di platform mana pun. Yang dikerjakannya tinggal tiga langkah dan dua
 yang pertama memang tak bisa diserahkan ke siapa pun — hanya VBOX yang punya
 token backend:
 
-1. unduh tarball
-2. ekstrak
-3. tulis skrip pendorong lalu **lepas installernya sebagai proses sendiri**
+1. unduh tarball + verifikasi sha256
+2. keluarkan **satu berkas** (`scripts/install.ps1`) dari tarball, tanyakan
+   daftar stage-nya — membongkar seluruhnya di dalam VBOX itu yang dulu
+   membekukan jendela ~52 detik
+3. tulis skrip pendorong lalu **lepas installernya sebagai proses sendiri**;
+   skrip itu yang menghentikan Hermes, `tar -xzf` seluruh source, lalu
+   menjalankan tiap stage
 
 Sesudah langkah 3, install bukan urusan VBOX lagi. Di Windows skripnya jalan di
 jendela konsol sendiri (`CREATE_NEW_CONSOLE`), di macOS di Terminal.app, di

@@ -584,13 +584,29 @@ gejala. Jadi yang dipindahkan bukan bebannya, melainkan tempatnya.
 
 ### Pembagian tugas sekarang
 
-VBOX mengerjakan tiga langkah, dan dua yang pertama memang tak bisa diserahkan
-ke siapa pun — hanya VBOX yang memegang token backend:
+VBOX mengerjakan tiga langkah, dan semuanya ringan:
 
-1. `vbox-download` — unduh tarball
-2. `vbox-extract` — verifikasi sha256 + ekstrak
+1. `vbox-download` — unduh tarball + verifikasi sha256
+2. `vbox-prepare` — keluarkan **satu berkas** (`scripts/install.ps1`) dari
+   tarball, tanyakan daftar stage-nya
 3. `vbox-handoff` — tulis skrip pendorong, lalu **lepas installernya sebagai
    proses sendiri**
+
+Langkah 2 itu hasil putaran kedua. Versi pertama membongkar SELURUH tarball di
+dalam VBOX supaya bisa bertanya daftar stage kepada installer — dan di situlah
+jendelanya masih membeku ~52 detik: 69 MB berarti ribuan berkas kecil, dan di
+Windows setiap tulisan melewati pemindai antivirus.
+
+Yang sebenarnya dibutuhkan cuma satu berkas. `install.ps1` dan `install.sh`
+sama-sama berdiri sendiri — tidak dot-source berkas tetangga — jadi
+mengeluarkan satu itu saja sudah cukup untuk bertanya. Aliran gzip tetap harus
+dibaca sampai berkasnya ketemu, tapi itu CPU beberapa detik tanpa satu pun
+tulisan ke disk. Sisanya dibongkar `tar` di luar sana, dalam satu proses.
+
+Konsekuensi penting: **penyaringan stage tetap di Rust** (`filter_stages`,
+lengkap dengan test-nya). Kalau skrip pendorong yang bertanya sendiri, logika
+"lewati `repository`, lewati yang `needs_user_input`" harus ditulis ulang dalam
+PowerShell DAN bash — dua salinan yang tidak bisa diuji dari mesin dev.
 
 Sesudah langkah 3, install bukan urusan VBOX lagi. Tidak ada pipe yang dibaca,
 tidak ada watchdog, tidak ada poller. Menutup VBOX di tengah install tidak
@@ -598,9 +614,13 @@ membatalkan apa pun — itu keuntungan tambahan, bukan efek samping.
 
 | Platform | Cara dilepas |
 |---|---|
-| Windows | `powershell.exe -File <driver>.ps1` dengan `CREATE_NEW_CONSOLE` — jendela konsol sendiri |
+| Windows | `powershell.exe -NoExit -File <driver>.ps1` dengan `CREATE_NEW_CONSOLE` — jendela konsol sendiri |
 | macOS | `open -a Terminal <driver>.sh`, jatuh ke tanpa-jendela kalau gagal |
 | Linux | `bash <driver>.sh` dengan `process_group(0)` — tanpa jendela, output ke berkas log |
+
+Skrip pendorong mengerjakan: hentikan Hermes yang memegang port 9119 →
+`tar -xzf` seluruh source → tulis `.vbox_commit` + `.install_method` → jalankan
+tiap stage.
 
 Ini berlaku di **semua** platform. Versi 18 Agustus sempat hanya
 menyerahkannya di Windows sementara macOS/Linux tetap menjalankan seluruh
@@ -645,9 +665,28 @@ generator skripnya:
   log yang dibaca VBOX cuma jadi sampah. StreamWriter juga membuka berkasnya
   sekali, bukan sekali per baris.
 
-Di sisi Unix: exit code stage diambil dari `${PIPESTATUS[0]}`, bukan `$?`.
-Outputnya dipipe ke `tee`, jadi `$?` adalah status `tee` yang hampir selalu 0 —
-stage yang gagal akan terbaca sukses.
+- **`tar` yang dipanggil harus `%SystemRoot%\System32\tar.exe`, bukan `tar`
+  dari PATH.** Mesin yang punya Git for Windows juga punya GNU tar, dan GNU tar
+  membaca `-f C:\...` sebagai arsip di mesin **remote bernama `C`** — gagalnya
+  berupa pesan soal rsh/ssh yang sama sekali tidak menyinggung path. bsdtar
+  bawaan Windows (10 1803+) tidak punya masalah itu.
+- **Jendela diluncurkan dengan `-NoExit`.** Kalau PowerShell gagal mem-parse
+  skripnya, ia keluar SEBELUM baris pertama dijalankan — termasuk sebelum apa
+  pun yang seharusnya menahan jendela. Yang user lihat cuma jendela berkedip
+  lalu hilang, tanpa satu pun pesan; kegagalan paling mahal untuk didiagnosis
+  dari jauh. Karena alasan yang sama skripnya ditulis sepolos mungkin: tidak
+  ada backtick sambung baris, tidak ada `New-Object`, tidak ada objek .NET.
+
+Dua jebakan bash:
+
+- exit code stage diambil dari `${PIPESTATUS[0]}`, bukan `$?`. Outputnya dipipe
+  ke `tee`, jadi `$?` adalah status `tee` yang hampir selalu 0 — stage yang
+  gagal akan terbaca sukses.
+- skripnya ditutup `exit 0` setelah `read`. `read` mengembalikan 1 saat stdin
+  habis (jalur Linux tanpa jendela), dan sebagai perintah terakhir ia
+  menentukan status keluar seluruh skrip — install yang sukses melaporkan
+  dirinya gagal. Ketahuan dari test yang menjalankan skripnya sungguhan, bukan
+  dari membaca ulang.
 
 ### Yang hilang, dan itu disengaja
 
@@ -671,12 +710,15 @@ tahu langkah itu ada.
 
 | Yang diuji | Hasil |
 |---|---|
-| `cargo test --lib` | ✅ 27/27 |
+| `cargo test --lib` | ✅ 32/32 |
 | `cargo check --lib` | ✅ 0 error, 0 warning |
 | `npx tsc --noEmit` + `npm run build` | ✅ bersih |
 | Skrip `.sh` hasil generator di-`bash -n` | ✅ |
 | Skrip `.sh` dijalankan sungguhan terhadap installer palsu | ✅ berhenti di stage gagal, `exit=7` dari `PIPESTATUS`, berkas keadaan terisi |
-| Skrip `.ps1` bebas-beku di Windows | ❌ **belum diuji** — ini yang harus dibuktikan run berikutnya |
+| Skrip `.sh` membongkar tarball `.tar.gz` sungguhan | ✅ seluruh isi terpasang, `.vbox_commit` + `.install_method` benar, `state=ok` |
+| `extract_single_file` mengambil installer saja | ✅ berkas lain tidak ikut ditulis, mode 755, entry tak ada → error |
+| Install penuh di Windows lewat jalur ini | ✅ **19 Agu 2026** — semua stage lewat, Hermes jalan (PID 14668), relay tersambung sebagai `node-2-laptop-qj2mjp45` |
+| Jendela VBOX bebas-beku selama `vbox-prepare` | ❌ **belum diuji** — ekstraksi baru dipindahkan setelah run yang sukses itu |
 
 Skrip PowerShell tidak bisa dijalankan dari mesin dev macOS, jadi yang diuji
 di sini teks yang dihasilkannya: pengutipan path berspasi, kelengkapan daftar
