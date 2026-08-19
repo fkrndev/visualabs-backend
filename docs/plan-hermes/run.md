@@ -305,16 +305,74 @@ reason kosong). Sudah ditambal: kedua env sekarang disuntik di jalur spawn juga.
 Buat mesin yang terlanjur, samakan manual di `~/.hermes/.env` (Windows:
 `%USERPROFILE%\.hermes\.env`) lalu restart Hermes.
 
-**Pembagian tugas baru di Windows (18 Agu 2026).** VBOX tidak lagi menggendong
-seluruh install. Ia mengunduh tarball + ekstrak (hanya dia yang punya token
-backend), lalu membuka **jendela terminal sendiri** untuk sisanya — uv, Python,
-Node, Chromium. Jendela itu tidak diikuti VBOX: tak ada pipe yang dibaca, tak
-ada watchdog. Menutup VBOX di tengah jalan tidak membatalkan apa pun. Sesudah
-terminalnya selesai, kembali ke VBOX dan klik "Sinkronkan Config".
+**Installer keluar dari VBOX (19 Agu 2026).** VBOX tidak lagi menggendong
+install, di platform mana pun. Yang dikerjakannya tinggal tiga langkah dan dua
+yang pertama memang tak bisa diserahkan ke siapa pun — hanya VBOX yang punya
+token backend:
+
+1. unduh tarball
+2. ekstrak
+3. tulis skrip pendorong lalu **lepas installernya sebagai proses sendiri**
+
+Sesudah langkah 3, install bukan urusan VBOX lagi. Di Windows skripnya jalan di
+jendela konsol sendiri (`CREATE_NEW_CONSOLE`), di macOS di Terminal.app, di
+Linux tanpa jendela. VBOX tidak membaca outputnya, tidak mengawasinya, dan
+**tidak bisa membatalkannya** — yang menghentikan cuma menutup jendela itu.
+Menutup VBOX di tengah install tidak membatalkan apa pun.
 
 Alasannya empiris: install lewat terminal mulus, install lewat VBOX membeku
 ("Not Responding"), padahal perintah dan mesinnya sama. Selama UI dan install
 5-15 menit berbagi satu proses, tambalan apa pun cuma mengurangi gejala.
+Percobaan sebelumnya — menurunkan prioritas proses, memindahkan I/O ke
+`spawn_blocking`, membaca output lewat berkas alih-alih pipe — semuanya
+mengurangi kebekuan tanpa menghilangkannya.
+
+**Kabar dari installer.** Setelah lepas, satu-satunya kabar adalah berkas
+keadaan `$HERMES_HOME/vbox-install-state.txt` plus berkas log di
+`$HERMES_HOME/logs/hermes-install-<waktu>.log`. Keduanya dibaca perintah
+`hermes_install_probe` — **hanya** saat user menekan "Cek Status". Tidak ada
+polling: beban yang baru dipindahkan keluar jangan diseret balik lewat pintu
+belakang.
+
+Formatnya `kunci=nilai` per baris, sengaja bukan JSON: yang menulisnya skrip
+shell dan nilainya path Windows penuh backslash — di JSON satu backslash yang
+lupa digandakan membuat seluruh berkas tak terbaca. Skripnya menambah baris,
+tidak menulis ulang, jadi baris belakangan menang.
+
+```
+log=C:\Users\saifu\AppData\Local\hermes\logs\hermes-install-20260819-143000.log
+started=2026-08-19T14:30:00
+state=starting
+state=running
+stage=node-deps
+updated=2026-08-19T14:31:12
+exit=0
+state=ok
+```
+
+Dua jebakan Windows yang sudah ditutup di generator skripnya, keduanya bikin
+gejala yang menyesatkan:
+
+- **Berkas `.ps1` ditulis dengan BOM UTF-8.** Windows PowerShell 5.1 membaca
+  `.ps1` tanpa BOM sebagai ANSI code page mesin. Nama user Windows non-ASCII
+  bukan hal langka, dan tanpa BOM `$dir` terisi rusak — installer lalu mencari
+  direktori yang tidak ada, dengan pesan yang sama sekali tidak menunjuk ke
+  penyebabnya.
+- **Log ditulis lewat `System.IO.StreamWriter`, bukan `Tee-Object` atau `>>`.**
+  Di PowerShell 5.1 keduanya menulis UTF-16LE sementara `Add-Content -Encoding
+  UTF8` di baris sebelahnya menulis UTF-8; satu berkas dua encoding, dan ekor
+  log yang dibaca VBOX cuma jadi sampah. StreamWriter juga membuka berkasnya
+  sekali, bukan sekali per baris — stage yang cerewet tidak lagi melewati
+  filter antivirus ratusan kali.
+
+Di sisi Unix, exit code stage diambil dari `${PIPESTATUS[0]}`, bukan `$?`:
+outputnya dipipe ke `tee`, jadi `$?` adalah status `tee` yang hampir selalu 0 —
+stage yang gagal akan terbaca sukses.
+
+**Config tetap urusan VBOX.** `config.yaml` butuh token backend, jadi installer
+di luar sana tidak bisa menulisnya sendiri. "Cek Status" yang melihat
+`state=ok` memanggil `hermes_sync_config` sendiri, sekali per install — user
+tidak perlu tahu langkah itu ada.
 
 **Tombol "Sinkronkan Config" (18 Agu 2026).** Kalau yang salah cuma config —
 model keliru, base URL gateway berubah, atau `config.yaml` memang tidak pernah

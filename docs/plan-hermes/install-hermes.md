@@ -566,3 +566,122 @@ Yang membuktikan perbaikan ini berhasil bukan "install selesai", melainkan **jen
 responsif selama `dependencies` dan `config-templates`**. Kalau masih membeku, sumber
 beban ketiga yang belum tersentuh: `hermes_install_status` di-poll tiap 2 detik dan setiap
 balasannya memicu render — jauh lebih ringan dari log, tapi belum diukur.
+
+---
+
+## 13. Installer keluar dari VBOX (19 Agustus 2026)
+
+Perbaikan §12 tidak menyelesaikan masalahnya. Setelah semua batching,
+penurunan prioritas proses, pemindahan I/O berat ke `spawn_blocking`, dan
+penggantian pipe dengan berkas sementara, jendela VBOX **masih** berstatus
+"Not Responding" saat install — kali ini di stage `config-templates`.
+
+Yang menutup perkara ini bukan pengukuran melainkan perbandingan yang sudah
+lama tersedia: **install lewat terminal mulus, install lewat VBOX membeku,
+padahal perintah dan mesinnya sama persis.** Selama proses yang menggambar UI
+juga yang menggendong install 5–15 menit, setiap tambalan hanya mengurangi
+gejala. Jadi yang dipindahkan bukan bebannya, melainkan tempatnya.
+
+### Pembagian tugas sekarang
+
+VBOX mengerjakan tiga langkah, dan dua yang pertama memang tak bisa diserahkan
+ke siapa pun — hanya VBOX yang memegang token backend:
+
+1. `vbox-download` — unduh tarball
+2. `vbox-extract` — verifikasi sha256 + ekstrak
+3. `vbox-handoff` — tulis skrip pendorong, lalu **lepas installernya sebagai
+   proses sendiri**
+
+Sesudah langkah 3, install bukan urusan VBOX lagi. Tidak ada pipe yang dibaca,
+tidak ada watchdog, tidak ada poller. Menutup VBOX di tengah install tidak
+membatalkan apa pun — itu keuntungan tambahan, bukan efek samping.
+
+| Platform | Cara dilepas |
+|---|---|
+| Windows | `powershell.exe -File <driver>.ps1` dengan `CREATE_NEW_CONSOLE` — jendela konsol sendiri |
+| macOS | `open -a Terminal <driver>.sh`, jatuh ke tanpa-jendela kalau gagal |
+| Linux | `bash <driver>.sh` dengan `process_group(0)` — tanpa jendela, output ke berkas log |
+
+Ini berlaku di **semua** platform. Versi 18 Agustus sempat hanya
+menyerahkannya di Windows sementara macOS/Linux tetap menjalankan seluruh
+stage di dalam VBOX; dua jalur berbeda untuk masalah yang sama berarti yang
+satu selalu kurang teruji.
+
+### Yang menggantikan checklist
+
+Satu-satunya kabar dari installer adalah dua berkas:
+
+| Berkas | Isi |
+|---|---|
+| `$HERMES_HOME/vbox-install-state.txt` | `kunci=nilai` per baris: `state`, `stage`, `exit`, `updated`, `log` |
+| `$HERMES_HOME/logs/hermes-install-<waktu>.log` | seluruh output installer |
+
+Dibaca perintah baru `hermes_install_probe` — **hanya** saat user menekan
+"Cek Status". Sengaja tanpa polling: beban yang baru dipindahkan keluar jangan
+diseret balik lewat pintu belakang.
+
+Formatnya bukan JSON karena yang menulisnya skrip shell dan nilainya path
+Windows penuh backslash; di JSON satu backslash yang lupa digandakan membuat
+seluruh berkas tak terbaca. Skripnya **menambah** baris, tidak menulis ulang,
+jadi baris belakangan menang — `state=ok` di akhir mengalahkan `state=running`
+di awal tanpa skripnya perlu baca-tulis-ulang.
+
+Berkas keadaan ditulis Rust **sebelum** skripnya diluncurkan. Tanpa itu, "Cek
+Status" yang ditekan sedetik setelah tombol install membaca sisa run kemarin —
+install baru yang sehat dilaporkan gagal.
+
+### Dua jebakan encoding Windows
+
+Keduanya menghasilkan gejala yang menyesatkan, dan keduanya sudah ditutup di
+generator skripnya:
+
+- **Berkas `.ps1` ditulis dengan BOM UTF-8.** PowerShell 5.1 membaca `.ps1`
+  tanpa BOM sebagai ANSI code page mesin. Nama user Windows non-ASCII bukan hal
+  langka; tanpa BOM `$dir` terisi rusak dan installer mencari direktori yang
+  tidak ada, dengan pesan yang sama sekali tidak menunjuk ke penyebabnya.
+- **Log ditulis lewat `System.IO.StreamWriter`, bukan `Tee-Object` atau `>>`.**
+  Di PowerShell 5.1 keduanya menulis UTF-16LE sementara `Add-Content -Encoding
+  UTF8` di baris sebelahnya menulis UTF-8 — satu berkas dua encoding, dan ekor
+  log yang dibaca VBOX cuma jadi sampah. StreamWriter juga membuka berkasnya
+  sekali, bukan sekali per baris.
+
+Di sisi Unix: exit code stage diambil dari `${PIPESTATUS[0]}`, bukan `$?`.
+Outputnya dipipe ke `tee`, jadi `$?` adalah status `tee` yang hampir selalu 0 —
+stage yang gagal akan terbaca sukses.
+
+### Yang hilang, dan itu disengaja
+
+- **Checklist per-stage installer.** Yang tersisa cuma tiga langkah VBOX.
+  Progres stage sekarang dilihat di jendela terminalnya, tempat yang memang
+  dirancang untuk itu.
+- **Tombol Batalkan untuk install.** VBOX tidak memegang prosesnya lagi. Yang
+  menghentikan adalah menutup jendela terminal; `hermes_install_cancel`
+  sekarang menolak dengan kalimat itu alih-alih berpura-pura bisa. Mengaku
+  bisa membatalkan justru yang berbahaya — user akan mengira install sudah
+  berhenti padahal masih menulis ke disk.
+- **`parse_stage_result` dan `StageResult`.** Frame JSON per-stage tidak lagi
+  dibaca VBOX; dihapus daripada dibiarkan berbohong tentang apa yang dikerjakan.
+
+`config.yaml` tetap urusan VBOX — ia butuh token backend, jadi installer di
+luar sana tidak bisa menulisnya. "Cek Status" yang melihat `state=ok`
+memanggil `hermes_sync_config` sendiri, sekali per install; user tidak perlu
+tahu langkah itu ada.
+
+### Verifikasi
+
+| Yang diuji | Hasil |
+|---|---|
+| `cargo test --lib` | ✅ 27/27 |
+| `cargo check --lib` | ✅ 0 error, 0 warning |
+| `npx tsc --noEmit` + `npm run build` | ✅ bersih |
+| Skrip `.sh` hasil generator di-`bash -n` | ✅ |
+| Skrip `.sh` dijalankan sungguhan terhadap installer palsu | ✅ berhenti di stage gagal, `exit=7` dari `PIPESTATUS`, berkas keadaan terisi |
+| Skrip `.ps1` bebas-beku di Windows | ❌ **belum diuji** — ini yang harus dibuktikan run berikutnya |
+
+Skrip PowerShell tidak bisa dijalankan dari mesin dev macOS, jadi yang diuji
+di sini teks yang dihasilkannya: pengutipan path berspasi, kelengkapan daftar
+stage, berhenti saat gagal, penulisan berkas keadaan, ketiadaan `Tee-Object`,
+dan seluruh isinya ASCII. Yang tersisa untuk dibuktikan di Windows cuma satu
+hal, dan itu justru yang paling penting: **jendela VBOX tetap responsif selama
+installer bekerja.** Sekarang klaim itu punya alasan struktural — VBOX sudah
+tidak melakukan apa-apa selama 5–15 menit itu.
