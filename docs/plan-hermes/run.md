@@ -46,10 +46,24 @@ Poin pentingnya:
 | Hermes node (custom-hermes) | `9119` | default `hermes serve --port`; VBOX hardcode 9119 |
 | Frontend VIMS (v-auto-frontend) | `2026` | `vite.config.ts` |
 
-Konvensi `node_id`: **`node-{userId}`** — angkanya = id user di tabel `users` v-auto-backend.
-Hub pakai regex `^node-(\d+)$` buat nge-resolve nama user di `GET /api/relay/nodes`
-(lihat [src/relay/hub.ts:71](../../src/relay/hub.ts#L71)). Kalau kamu pakai id ngasal
+Konvensi `node_id`: **`node-{userId}-{namaMesin}`** (sejak 19 Agu 2026; bentuk lama
+**`node-{userId}`** tetap diterima) — angkanya = id user di tabel `users` v-auto-backend.
+Hub pakai regex `NODE_ID_RE` buat nge-resolve nama user di `GET /api/relay/nodes`
+(lihat [src/relay/hub.ts](../../src/relay/hub.ts)). Kalau kamu pakai id ngasal
 (`node-a`), node tetap konek tapi labelnya gak keresolve jadi nama orang.
+
+**Kenapa ada akhiran nama mesin.** Tanpa itu satu orang cuma bisa pakai satu laptop:
+dua mesin dengan akun sama mendaftar dengan id yang sama, dan `registerNode()` nutup
+pendaftaran sebelumnya berikut seluruh channel-nya. Hasilnya bukan "salah satu kalah"
+tapi saling tendang tanpa henti — chat yang lagi jalan ikut putus tiap pergantian, dan
+gak ada pesan apa pun yang jelasin itu. VBOX nge-slug nama mesin dulu (huruf kecil,
+angka, hubung, maks 24 char) karena `node_id` masuk query param dan nama komputer
+Windows bebas berisi spasi/garis bawah/non-ASCII.
+
+Label dropdown jadi `Nama · NAMA-MESIN` **cuma** buat id yang bawa akhiran mesin; node
+lama tetep tampil `Nama` doang. Dan halaman Agent sekarang milih node sendiri duluan —
+sebelumnya `nodes[0]`, yang begitu daftarnya panjang bisa diam-diam nyambungin kamu ke
+laptop rekan.
 
 ---
 
