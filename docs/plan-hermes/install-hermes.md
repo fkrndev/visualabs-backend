@@ -165,7 +165,7 @@ sama persis dengan yang dilakukan VBOX, cuma dijalankan tangan:
 1. **Source tetap dari backend**, bukan `git clone`. Tombol unduh melakukan `fetch` ber-`Authorization: Bearer <JWT>` ke `/api/hermes/tarball` lalu menyimpannya sebagai blob — endpoint-nya JWT-only, jadi `<a href>` biasa tidak bisa dipakai. Metadata (commit, ukuran, tanggal) diambil dari `/api/hermes/manifest`.
 2. **Stage `repository` dilewati**, sama seperti `SKIPPED_STAGES` di `hermes_install.rs`. Ini bukan optimasi — kalau ikut dijalankan, `install.sh`/`install.ps1` meng-clone `NousResearch/hermes-agent` dan menimpa source dari server, sehingga `relay_node.py` hilang dan node tidak akan pernah muncul di relay hub. Alasannya dijelaskan ke user dengan bahasa awam di halamannya. Stage yang dijalankan: `prerequisites venv python-deps node-deps path config`.
 3. **`config.yaml` + `.env` di-generate dari halaman.** `config.yaml` apa adanya dari `/api/hermes/config`; `.env` dirakit di browser dengan isi yang identik dengan `write_env_merged()` milik VBOX — API key dari server, `HERMES_RELAY_HUB_URL` diturunkan dari `PUBLIC_API_BASE_URL` (`http→ws`, `https→wss`), `HERMES_RELAY_NODE_ID` = `node-{userId}`, dan `HERMES_RELAY_LOCAL_TOKEN` = `HERMES_DASHBOARD_SESSION_TOKEN` diacak lewat `crypto.randomUUID()`. Berkasnya diarahkan ke `$HERMES_HOME/.env` (bukan root source) karena `env_loader.load_hermes_dotenv()` memuat `~/.hermes/.env` dengan `override=True`.
-4. **Node token diminta lewat input**, tidak diambil otomatis. Backend tidak punya endpoint yang membocorkan `RELAY_NODE_TOKEN` ke user, dan sebaiknya tetap begitu — user memintanya ke admin.
+4. **Node token diminta lewat input** di jalur manual ini. ~~Backend tidak punya endpoint yang membocorkan `RELAY_NODE_TOKEN` ke user, dan sebaiknya tetap begitu~~ — **keputusan ini gugur 21 Agu 2026**, lihat §14. Backend sekarang punya `GET /api/relay/node-token` (ber-JWT) dan VBOX memakainya otomatis. Halaman manual belum ikut memakainya; user jalur manual masih menempelkannya sendiri.
 
 Perbedaan yang disebutkan eksplisit ke user: jalur manual tidak punya auto-start, jadi `hermes serve`
 harus dijalankan lagi tiap reboot.
@@ -237,7 +237,7 @@ dan `relay/hub.ts` semuanya baca sumber nyata (git, disk, env, DB). Yang menghal
   Catatan: `git archive` **tidak** byte-identik antar mesin (gzip beda versi), jadi tarball hasil pack di server punya sha256 berbeda dari hasil pack di laptop meski commit-nya sama. Ini tidak merusak apa pun — cache VBOX membandingkan hash terhadap manifest, tidak cocok → unduh ulang.
 
   Catatan: `storage/hermes/` ada di `.gitignore`, jadi `git reset --hard` milik `deploy.sh` **tidak** menghapusnya — tarball selamat melewati deploy berikutnya.
-- [ ] **`RELAY_NODE_TOKEN` di `.env` masih token dev** (`dev-...`). Untuk production ganti nilai acak yang panjang. Perhatikan: VBOX mem-*fallback* ke literal `"rahasia123"` kalau field **Relay Node Token** di Settings kosong (`v-box/src-tauri/src/network/relay.rs:61`) — jadi pilih salah satu: set token beneran di tiap VBOX, atau pakai `RELAY_NODE_TOKENS` per-node. Jangan pernah menyetel token server jadi `rahasia123` supaya default itu "bekerja".
+- [x] **`RELAY_NODE_TOKEN` tidak lagi perlu dipasang di tiap VBOX** (21 Agu 2026). VBOX mengambilnya sendiri dari `GET /api/relay/node-token` — lihat §14. Fallback ke literal `"rahasia123"` masih ada untuk kasus belum-login/backend-tak-terjangkau, jadi jangan pernah menyetel token server jadi `rahasia123` supaya default itu "bekerja". Yang masih perlu dilakukan di server: pastikan nilainya acak dan panjang, bukan `dev-...`.
 - [ ] **Rotate DeepSeek key** yang masih ter-commit di `custom-hermes/install-team.ps1:114` (nomor barisnya bergeser dari 101; key-nya masih ada dan tetap ada di riwayat git — rotasi, bukan sekadar hapus baris).
 
   **Satu-satunya blocker yang tersisa, dan sekarang jauh lebih murah diselesaikan.** Key yang dipasang di server 10 Agu 2026 adalah key yang sama dengan yang ter-commit itu — dikonfirmasi identik lewat perbandingan hash. Bedanya: sejak mode gateway aktif, key itu hidup **hanya di satu tempat**. Rotasi sekarang berarti mengganti satu baris di `.env` server lalu `pm2 restart vims` — tidak ada laptop yang perlu disentuh, tidak ada yang perlu install ulang.
@@ -727,3 +727,26 @@ dan seluruh isinya ASCII. Yang tersisa untuk dibuktikan di Windows cuma satu
 hal, dan itu justru yang paling penting: **jendela VBOX tetap responsif selama
 installer bekerja.** Sekarang klaim itu punya alasan struktural — VBOX sudah
 tidak melakukan apa-apa selama 5–15 menit itu.
+
+
+---
+
+## 14. Node Token tidak lagi diketik tangan (21 Agustus 2026)
+
+Keputusan di §"Jalur 2" poin 4 — *"backend tidak punya endpoint yang membocorkan
+`RELAY_NODE_TOKEN` ke user, dan sebaiknya tetap begitu"* — **gugur**. Yang
+membatalkannya bukan perubahan pendapat soal kerahasiaan, melainkan laporan
+lapangan: token sudah diisi benar, disimpan, config disinkronkan, VBOX di-restart,
+dan relay tetap menolak. Empat penyebab yang berbeda menghasilkan satu gejala yang
+sama persis, dan tidak satu pun langkah di layar VBOX bisa membedakannya.
+
+Rancangan, alasan, jebakan urutan pemanggilan, dan pertimbangan kerahasiaannya
+ditulis lengkap di [run.md §10](./run.md) — tidak diulang di sini supaya tidak ada
+dua versi yang bisa saling menyimpang.
+
+Ringkas yang berubah:
+
+- Backend: `GET /api/relay/node-token` (JWT), berbagi `tokenForNode()` dengan gerbang `/relay/node`.
+- VBOX: sinkron otomatis saat login dan saat aplikasi dibuka; tombol **Ambil dari Server** untuk token yang diganti selagi VBOX terbuka.
+- Bug ikutan yang ditutup: node token tidak pernah di-`trim()` sebelum dipakai.
+- Halaman install manual di VIMS belum ikut — masih input tangan.

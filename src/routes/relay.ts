@@ -27,10 +27,22 @@ try {
 } catch {
 	PER_NODE_TOKENS = {};
 }
+/**
+ * Token yang server terima untuk sebuah node — `""` kalau belum disetel.
+ *
+ * Satu-satunya sumber kebenaran, dipakai oleh gerbang di `/node` MAUPUN oleh
+ * `/node-token` yang membagikannya ke VBOX. Sengaja dipakai bersama: kalau
+ * keduanya menghitung sendiri-sendiri, suatu hari yang dibagikan akan
+ * berbeda dari yang diterima, dan gejalanya persis kegagalan yang endpoint
+ * itu dibuat untuk menghilangkan.
+ */
+function tokenForNode(nodeId: string): string {
+	return (nodeId ? PER_NODE_TOKENS[nodeId] : undefined) || SHARED_NODE_TOKEN;
+}
+
 function nodeTokenValid(nodeId: string, token: string): boolean {
-	const expected = PER_NODE_TOKENS[nodeId];
-	if (expected) return token === expected;
-	return !!SHARED_NODE_TOKEN && token === SHARED_NODE_TOKEN;
+	const expected = tokenForNode(nodeId);
+	return !!expected && token === expected;
 }
 
 /**
@@ -53,6 +65,56 @@ function rejectReason(nodeId: string, token: string): string {
 // ── Daftar node online (buat dropdown "pilih Hermes server" di FE) ──────────
 router.get("/nodes", requireAuthWithFallback, async (c) => {
     return c.json({ success: true, data: await hub.listNodes() });
+});
+
+// ── Token node buat VBOX yang sudah login ──────────────────────────────────
+/**
+ * Server yang membagikan token, bukan user yang mengetiknya.
+ *
+ * Sebelumnya token diketik manual di Settings VBOX dan harus sama persis
+ * dengan `RELAY_NODE_TOKEN` di sini. Satu spasi ikut ter-paste, atau nilai
+ * yang sudah diganti di server, menghasilkan gejala yang sama persis dengan
+ * salah konfigurasi server: node ditolak `1008 unauthorized` tanpa alasan.
+ * Dari sisi user tidak ada cara membedakan "token saya salah" dari "server
+ * belum punya token" — dua-duanya cuma agent Offline.
+ *
+ * Nilai yang dikembalikan di sini adalah nilai yang PERSIS dipakai
+ * `nodeTokenValid()` di bawah, jadi selisih antara keduanya mustahil.
+ *
+ * Soal kerahasiaan: ini token bersama yang memang dibagikan ke setiap VBOX di
+ * tim — dulu lewat pesan ke admin, sekarang lewat endpoint ber-JWT. Himpunan
+ * orang yang memegangnya tidak bertambah; yang hilang cuma salah ketiknya.
+ * Kalau suatu saat token perlu dipersempit per orang, isi `RELAY_NODE_TOKENS`
+ * dan endpoint ini otomatis membagikan entry milik node yang bertanya.
+ */
+router.get("/node-token", requireAuthWithFallback, (c) => {
+	const nodeId = c.req.query("node_id") || "";
+	const token = tokenForNode(nodeId);
+
+	if (!token) {
+		// Bukan error: server menjawab dengan jujur bahwa ia belum disetel.
+		// Tanpa ini VBOX akan terus menyalahkan token user, padahal token apa
+		// pun akan ditolak selama `RELAY_NODE_TOKEN` di sini kosong.
+		return c.json({
+			success: true,
+			data: {
+				configured: false,
+				node_token: "",
+				scope: "none",
+				message:
+					"RELAY_NODE_TOKEN belum diset di server relay - semua node akan ditolak apa pun tokennya.",
+			},
+		});
+	}
+
+	return c.json({
+		success: true,
+		data: {
+			configured: true,
+			node_token: token,
+			scope: nodeId && PER_NODE_TOKENS[nodeId] ? "per-node" : "shared",
+		},
+	});
 });
 
 // ── Node-agent connect keluar ke sini ──────────────────────────────────────

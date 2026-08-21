@@ -258,7 +258,8 @@ WS lama ditutup, semua channel di-cancel, loop reconnect ngambil config baru.
 | Gejala | Sebabnya | Fix |
 |---|---|---|
 | `[relay-node] not configured` | env `HUB_URL`/`NODE_ID`/`NODE_TOKEN` ada yang kosong | cek `relay-dev.env` kebaca (harus di root `custom-hermes/`) |
-| Node connect lalu langsung disconnect, loop backoff | token gak cocok → hub `ws.close(1008, "unauthorized")` | samakan `HERMES_RELAY_NODE_TOKEN` ↔ `RELAY_NODE_TOKEN`; kalau pakai `RELAY_NODE_TOKENS`, entry per-node yang menang. Alasan persisnya ada di log server: `[relay] node 'node-N' ditolak: ...` |
+| Node connect lalu langsung disconnect, loop backoff | token gak cocok → hub `ws.close(1008, "unauthorized")` | Sejak 21 Agu 2026 VBOX mengambil tokennya sendiri — klik **Ambil dari Server** di Settings ▸ Agent, lalu **Muat Ulang Hermes**. Kalau masih ditolak, alasan persisnya ada di log server: `[relay] node 'node-N' ditolak: ...` |
+| Sudah isi token yang benar, save, sinkron config, restart — masih ditolak | Hermes masih hidup dengan token lama, ATAU token yang di-paste bawa spasi/newline, ATAU `RELAY_NODE_TOKEN` di server memang beda dari yang dikasih ke user | Tiga-tiganya hilang dengan **Ambil dari Server** (§10): nilainya datang dari `tokenForNode()` yang sama persis dipakai gerbang `/relay/node`, dan di-`trim()` di sisi VBOX. Kalau server menjawab `configured: false`, itu salah server dan tidak ada yang bisa diperbaiki dari VBOX |
 | Semua node ditolak, padahal token di VBOX udah bener | `RELAY_NODE_TOKEN` kosong di server → `nodeTokenValid()` selalu `false`, token apa pun ditolak | set `RELAY_NODE_TOKEN` di env server relay. Node cuma nerima `1008 unauthorized` tanpa alasan, jadi ini cuma kelihatan dari log server |
 | FE dapat `node 'node-5' tidak online` | node belum register di hub | cek `GET /api/relay/nodes`, cek log Terminal 2 |
 | Chat nyambung tapi langsung ketutup | channel ke `/api/ws` lokal ditolak 4401 | `HERMES_RELAY_LOCAL_TOKEN` harus == `HERMES_DASHBOARD_SESSION_TOKEN` |
@@ -287,11 +288,15 @@ sendiri dan nyuntik env `HERMES_RELAY_*` dari Settings
 
 - `relay_ws_url` diturunkan dari **Backend API URL** di Settings
   (`http://localhost:2024/api` → `ws://localhost:2024/api/relay`).
-- `node_id` = `node-{backend_user_id}` (dari hasil login VBOX).
-- `node_token` dari field **Relay Node Token** di Settings (default `rahasia123`)
-  — samakan dengan `RELAY_NODE_TOKEN` di `.env` backend dev kamu.
-- `local_token` default `rahasia123` juga, jadi kalau nge-tes VBOX + backend dev,
-  set `RELAY_NODE_TOKEN=rahasia123` di backend biar gak usah ngutak-ngatik Settings.
+- `node_id` = `node-{backend_user_id}-{nama-mesin}` (dari hasil login VBOX; jatuh ke
+  `node-{backend_user_id}` kalau nama mesin tidak terbaca).
+- `node_token` **diambil sendiri dari backend** lewat `GET /api/relay/node-token`
+  tiap kali login dan tiap VBOX dibuka — tidak perlu diketik lagi. Field **Relay
+  Node Token** di Settings sekarang cuma jalan keluar: begitu diketik tangan ia
+  ditandai `relay_node_token_manual: true` dan berhenti disegarkan otomatis.
+  Detailnya di §10.
+- `local_token` default `rahasia123`, jadi kalau nge-tes VBOX + backend dev, biarkan
+  saja apa adanya.
 
 **Catatan 18 Agu 2026 — jalur spawn VBOX sempat pincang.** `start_hermes_with_relay()`
 di `v-box/src-tauri/src/lib.rs` nyuntik `HERMES_RELAY_LOCAL_TOKEN` tapi **lupa**
@@ -391,6 +396,63 @@ Buat instalasi Hermes-nya sendiri lewat tombol "Install Agent", lihat
 [install-hermes.md](install-hermes.md).
 
 ---
+
+## 10. Node Token diambil otomatis (21 Agustus 2026)
+
+**Masalahnya.** Node Token diketik user di Settings VBOX dan harus sama **persis**
+dengan `RELAY_NODE_TOKEN` di server. Kalau tidak sama, hub menutup koneksi dengan
+`1008 unauthorized` — tanpa alasan, karena alasan sengaja tidak dikirim ke node
+(lihat `rejectReason()` di [src/routes/relay.ts](../../src/routes/relay.ts)). Dari
+sisi user, empat keadaan yang sangat berbeda terlihat identik, yaitu "agent Offline":
+
+1. token salah ketik / nilai lama,
+2. token benar tapi ikut terbawa spasi atau newline waktu di-paste,
+3. token benar tapi Hermes masih hidup dengan nilai sebelumnya,
+4. `RELAY_NODE_TOKEN` di server memang belum diset — token apa pun ditolak.
+
+Nomor 4 bukan salah user sama sekali, dan tidak ada yang bisa ia lakukan dari VBOX.
+Ini yang membuat siklus "isi → save → sinkron → reload → restart → masih ditolak"
+bisa berulang tanpa habis: tidak ada satu pun langkah di dalamnya yang bisa
+membedakan keempat kasus itu.
+
+**Yang dilakukan sekarang.** User sudah login ke backend yang sama, jadi tokennya
+ditanyakan langsung ke sana.
+
+| Sisi | Yang dibuat |
+|---|---|
+| Backend | `GET /api/relay/node-token?node_id=…` (JWT). Balasannya `{ configured, node_token, scope }`. Nilainya dari `tokenForNode()` — fungsi yang **sama persis** dipakai `nodeTokenValid()` di gerbang `/relay/node`, jadi selisih antara "yang dibagikan" dan "yang diterima" mustahil secara konstruksi, bukan sekadar dijaga oleh tes. Kalau `RELAY_NODE_TOKENS` diisi, entry milik node yang bertanya yang dibagikan. |
+| VBOX | `relay::sync_node_token_from_backend()` dipanggil di `backend_save_token` (tiap login) dan di `setup()` (tiap VBOX dibuka), plus command `relay_sync_node_token` di balik tombol **Ambil dari Server** di Settings ▸ Agent. |
+
+Urutan pemanggilannya menentukan dan gampang salah: `config_from_settings()` membaca
+settings **sekali** lalu nilai itu ikut ke env var Hermes. Jadi sinkron token harus
+selesai **sebelum** config dibangun — di startup, `config_from_settings()` sengaja
+dipanggil dua kali: sekali untuk tahu "sudah login atau belum", sekali lagi sesudah
+sinkron untuk mendapat token barunya.
+
+**Kasus 2 ditutup terpisah.** Token sekarang di-`trim()` waktu dipakai, bukan cuma
+dipakai `trim()` untuk mengecek kosong. Bug lama: `.filter(|t| !t.trim().is_empty())`
+memeriksa versi terpangkasnya tapi meneruskan versi aslinya, jadi `"tok\n"` lolos
+apa adanya ke query string. Dijaga tes `token_dipangkas_sebelum_dipakai`.
+
+**Kasus 4 sekarang punya suara.** Kalau server menjawab `configured: false`, VBOX
+menampilkan kalimat dari server — "RELAY_NODE_TOKEN belum diset di server relay" —
+bukan lagi menyalahkan token user.
+
+**Jalan keluar tetap ada.** Mengetik di field Node Token menandainya
+`relay_node_token_manual: true` di settings, dan sejak itu sinkron otomatis berhenti
+menimpanya (buat relay sendiri / dev). Statusnya kelihatan di UI, karena token salah
+ketik yang diam-diam bertahan selamanya justru masalah yang sedang kita tutup.
+`None` — settings dari VBOX versi lama — sengaja **tidak** diperlakukan sebagai
+manual: isinya justru token ketikan yang gagal, karena itulah fitur ini ada.
+
+**Soal kerahasiaan.** Endpoint ini membagikan token bersama ke setiap user ber-JWT.
+Himpunan orang yang memegangnya tidak bertambah — sebelumnya token yang sama
+dikirim ke mereka lewat chat/pesan ke admin. Yang hilang cuma salah ketiknya. Kalau
+suatu saat perlu dipersempit per orang, isi `RELAY_NODE_TOKENS` dan endpoint ini
+otomatis membagikan entry per-node.
+
+**Yang belum.** Halaman install manual di VIMS (`/agent/install`) masih meminta token
+lewat input — ia bisa memakai endpoint yang sama, tapi belum diubah.
 
 ## Referensi kode
 
