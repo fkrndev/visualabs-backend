@@ -451,6 +451,47 @@ dikirim ke mereka lewat chat/pesan ke admin. Yang hilang cuma salah ketiknya. Ka
 suatu saat perlu dipersempit per orang, isi `RELAY_NODE_TOKENS` dan endpoint ini
 otomatis membagikan entry per-node.
 
+### 10.1 Penyebab sebenarnya di lapangan: `.env` mengalahkan env var (21 Agu 2026)
+
+Log server hari itu menutup tebak-tebakan. `~/web/vims.dots.my.id/private/v-auto-backend/logs/error.log`:
+
+```
+[relay] node 'node-3-baguswicaksono' ditolak: token tidak cocok dengan RELAY_NODE_TOKEN
+```
+
+…dan di `out.log`, permintaan yang menghasilkannya:
+
+```
+GET /api/relay/node?token=rahasia123&node_id=node-3-baguswicaksono&label=BAGUSWICAKSONO
+```
+
+`rahasia123` itu **default bawaan VBOX** — nilai yang dipakai kalau Node Token kosong.
+Padahal user-nya sudah mengisi token yang benar, menyimpan, menyinkronkan config, dan
+me-restart VBOX. Jadi yang ia ketik tidak pernah sampai ke hub.
+
+Sebabnya: `start_hermes_with_relay()` menyuntikkan `HERMES_RELAY_NODE_TOKEN` sebagai env
+var, tapi Hermes memuat `$HERMES_HOME/.env` dengan **`override=True`**
+([hermes_cli/env_loader.py:314](../../../custom-hermes/hermes_cli/env_loader.py)).
+Urutannya:
+
+1. VBOX menyuntik token yang benar → 2. Hermes start → 3. `.env` menimpanya kembali
+dengan nilai lama.
+
+Env var yang "menang" menurut kode VBOX ternyata kalah di proses anaknya, dan tidak ada
+satu pun log yang menyebutkannya. Ini juga menjelaskan kenapa tiga node berbeda
+(`node-2`, `node-2-desktop-fghnl0k`, `node-3-baguswicaksono`) sama-sama ditolak sementara
+`node-2-laptop-qj2mjp45` diterima — yang terakhir kebetulan `.env`-nya sudah benar dari
+jalur install.
+
+**Perbaikannya**: `sync_relay_env()` di `hermes_install.rs` menulis keenam kunci relay ke
+`$HERMES_HOME/.env` **sebelum** Hermes di-spawn, dan juga di jalur update-lewat-API.
+Jadi env var dan `.env` tidak lagi berlomba — keduanya dipaksa sama. Jalur API penting
+sendiri: tanpa itu relay jalan hari ini lalu mati besok pagi, karena `.env` lama
+mengembalikan nilainya di start berikutnya.
+
+Catatan keamanan yang belum ditangani: node token ikut tertulis polos di `out.log` karena
+ia dikirim sebagai query param WS. Perlu dipindah ke header, atau disaring dari log.
+
 **Yang belum.** Halaman install manual di VIMS (`/agent/install`) masih meminta token
 lewat input — ia bisa memakai endpoint yang sama, tapi belum diubah.
 
