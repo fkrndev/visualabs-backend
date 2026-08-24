@@ -53,6 +53,11 @@ TIER 3 — AGENT NODES (Hermes = CLIENT, boleh di balik NAT)
 - **tui_gateway JSON-RPC** di `/api/ws` (yang sudah dipakai Bubble Chat sekarang):
   `session.create`, `prompt.submit`, event `message.start/delta/interim/complete`,
   `tool.start/complete`, `thinking.delta`, `error`. Ref tipe: `ui-tui/src/gatewayTypes.ts`.
+  Dua event **blocking** juga dipakai: `approval.request` → `approval.respond`
+  (`{session_id, choice}`) dan `clarify.request` → `clarify.respond`
+  (`{request_id, answer}`, jawaban kosong = "lewati"). Node menahan giliran
+  sampai dijawab (clarify: 300 detik), jadi keduanya WAJIB punya UI —
+  panel-nya ada di `/agent` (`src/routes/agent/+page.svelte`).
 - **Relay ⇄ node-agent** (baru, kita definisikan): framing tipis buat multiplex banyak sesi browser lewat 1 koneksi node.
 - **LLM Gateway**: OpenAI-compatible `/v1/chat/completions` (+ `/v1/models`) passthrough ke DeepSeek dengan key di-inject server-side.
 

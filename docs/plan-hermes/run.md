@@ -169,6 +169,14 @@ HERMES_DASHBOARD_SESSION_TOKEN=local-secret \
   uv run hermes serve --host 127.0.0.1 --port 9119 --skip-build
 ```
 
+Atau pakai pembungkusnya (24 Agu 2026) yang cuma milih hub mana yang dipakai —
+env di shell menang atas `relay-dev.env` (`load_dotenv(..., override=False)`):
+
+```bash
+./run-hermes.sh        # prod  → hub dari relay-dev.env (wss://vims.dots.my.id/api/relay)
+./run-hermes.sh dev    # dev   → ws://localhost:2024/api/relay, token dibaca dari v-auto-backend/.env
+```
+
 - `serve` = mode headless: gak build SPA, gak buka browser. Ini yang dipakai VBOX/desktop.
 - `--skip-build` biar gak nunggu build web tiap start. Kalau mau UI dashboard lokal,
   pakai `hermes dashboard --port 9119 --no-open` (sama-sama boot gateway yang sama).
@@ -266,6 +274,7 @@ WS lama ditutup, semua channel di-cancel, loop reconnect ngambil config baru.
 | `Address already in use :9119` | ada Hermes lama nyangkut | `hermes serve --status` lalu `hermes serve --stop`, atau `lsof -ti tcp:9119 \| xargs kill -9` |
 | `channel ... connect failed` di log node | Hermes lokal belum siap / port beda | pastikan `HERMES_RELAY_LOCAL_WS` nunjuk port yang sama dengan `--port` |
 | Label node muncul sebagai hostname, bukan nama user | `node_id` gak match `node-{angka}` | pakai id user beneran |
+| Tombol hapus sesi di `/agent` gak ngefek | Sesi yang pernah dibuka/dibuat di koneksi itu masih hidup di gateway → `session.delete` dibalas `4023 cannot delete an active session`, dan FE dulu menelan galatnya | Sejak 24 Agu 2026 FE menutup dulu sesi live-nya (`session.active_list` → `session.close`) baru `session.delete`; galat lain sekarang muncul di layar |
 | MCP panel di FE error 502 | `mcp_req` diproxy ke `http://127.0.0.1:9119` pakai `LOCAL_TOKEN` sebagai Bearer | token sama seperti di atas |
 
 Log berguna:
