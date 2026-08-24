@@ -47,6 +47,8 @@ import llmGatewayRoutes from "./routes/llmGateway";
 import relayRoutes from "./routes/relay";
 import hermesRoutes from "./routes/hermes";
 import teamSkillRoutes from "./routes/teamSkills";
+import shopeeScraperRoutes from "./routes/shopeeScraper";
+import shopeeOptimizationRoutes from "./routes/shopeeOptimization";
 // HR modules (Fase 1–3: organisasi, karyawan, presensi, cuti)
 import hrBranchRoutes from "./routes/hr/branches";
 import hrDepartmentRoutes from "./routes/hr/departments";
@@ -154,6 +156,11 @@ app.route("/relay", relayRoutes);
 app.route("/hermes", hermesRoutes);
 // Team Skill Hub — registry skill Hermes milik tim. Sama: sebelum route "/".
 app.route("/team-skills", teamSkillRoutes);
+// Shopee Optimization — scraper & session routes. Di-mount sebelum route "/"
+// untuk hindari middleware wildcard (sama seperti llm/relay/hermes).
+app.route("/shopee-optimization", shopeeScraperRoutes);
+// Shopee Optimization — session CRUD + auto-run. Sama: di-mount sebelum route "/".
+app.route("/shopee-optimization", shopeeOptimizationRoutes);
 
 app.route("/", profileLockRoutes);
 app.route("/chrome-histories", chromeHistoryRoutes);

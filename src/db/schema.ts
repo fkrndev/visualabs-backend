@@ -3088,3 +3088,249 @@ export const teamSkillUsageRelations = relations(teamSkillUsage, ({ one }) => ({
     }),
     user: one(users, { fields: [teamSkillUsage.userId], references: [users.id] }),
 }));
+
+// ============================================================
+// Shopee Optimization — session-based scrape + AI analysis
+//
+// Arsitektur: VBOX app = browser manager (launch/stop profile),
+// v-auto-backend = scraper + AI (connect CDP, scrape, analyze).
+// Session = 1x scrape + 1x analyze untuk 1 staff profile.
+// ============================================================
+
+/**
+ * Session — 1x scrape + analyze per staff profile.
+ * profile_id = VBOX Staff Profile UUID (varchar, bukan FK ke chrome_profiles
+ * karena profile data ada di prod v-auto-backend, bukan local).
+ */
+export const shopeeScrapeSessions = mysqlTable(
+    'shopee_scrape_sessions',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        profileId: varchar('profile_id', { length: 36 }),
+        profileName: varchar('profile_name', { length: 255 }),
+        status: mysqlEnum('status', ['scraping', 'analyzing', 'done', 'failed']).notNull().default('scraping'),
+        errorReason: varchar('error_reason', { length: 100 }),
+        shopUrl: varchar('shop_url', { length: 500 }),
+        startedAt: timestamp('started_at').defaultNow().notNull(),
+        completedAt: timestamp('completed_at'),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [
+        index('shopee_sessions_profile_idx').on(table.profileId),
+        index('shopee_sessions_status_idx').on(table.status),
+    ]
+);
+
+/**
+ * Shop — data toko dari scrape (seller center + public shop page).
+ * 1 session = 1 shop record.
+ */
+export const shopeeShops = mysqlTable(
+    'shopee_shops',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        sessionId: int('session_id').notNull().references(() => shopeeScrapeSessions.id, { onDelete: 'cascade' }),
+        shopName: varchar('shop_name', { length: 255 }),
+        shopSlug: varchar('shop_slug', { length: 255 }),
+        shopUrl: varchar('shop_url', { length: 500 }),
+        shopBio: text('shop_bio'),
+        shopStats: json('shop_stats').$type<JsonRecord>(),
+        sellerData: json('seller_data').$type<JsonRecord>(),
+        logoUrl: varchar('logo_url', { length: 500 }),
+        logoLocal: varchar('logo_local', { length: 500 }),
+        bannerUrl: varchar('banner_url', { length: 500 }),
+        bannerLocal: varchar('banner_local', { length: 500 }),
+        heroImages: json('hero_images').$type<string[]>(),
+        bottomHeroImages: json('bottom_hero_images').$type<string[]>(),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [
+        uniqueIndex('shopee_shops_session_uq').on(table.sessionId),
+    ]
+);
+
+/**
+ * Product — data produk dari scrape (shop page + detail page).
+ * 1 session = banyak produk.
+ */
+export const shopeeProducts = mysqlTable(
+    'shopee_products',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        sessionId: int('session_id').notNull().references(() => shopeeScrapeSessions.id, { onDelete: 'cascade' }),
+        productId: varchar('product_id', { length: 50 }),
+        title: varchar('title', { length: 500 }),
+        description: text('description'),
+        price: varchar('price', { length: 100 }),
+        originalPrice: varchar('original_price', { length: 100 }),
+        categories: json('categories').$type<string[]>(),
+        variants: json('variants').$type<Record<string, string[]>>(),
+        stock: varchar('stock', { length: 50 }),
+        rating: varchar('rating', { length: 20 }),
+        ratingCount: varchar('rating_count', { length: 20 }),
+        sold: varchar('sold', { length: 50 }),
+        favorit: varchar('favorit', { length: 50 }),
+        brand: varchar('brand', { length: 100 }),
+        specs: json('specs').$type<JsonRecord>(),
+        images: json('images').$type<string[]>(),
+        reviews: json('reviews').$type<any[]>(),
+        productUrl: varchar('product_url', { length: 500 }),
+        thumbnailUrl: varchar('thumbnail_url', { length: 500 }),
+        thumbnailLocal: varchar('thumbnail_local', { length: 500 }),
+        detailError: text('detail_error'),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [
+        index('shopee_products_session_idx').on(table.sessionId),
+        index('shopee_products_product_id_idx').on(table.productId),
+    ]
+);
+
+/**
+ * Image — semua image yang di-download untuk session ini.
+ * 1 session = banyak image (logo, banner, product photos).
+ */
+export const shopeeImages = mysqlTable(
+    'shopee_images',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        sessionId: int('session_id').notNull().references(() => shopeeScrapeSessions.id, { onDelete: 'cascade' }),
+        productId: int('product_id').references(() => shopeeProducts.id, { onDelete: 'cascade' }),
+        type: mysqlEnum('type', ['shop_logo', 'shop_banner', 'product_thumbnail', 'product_photo']),
+        originalUrl: varchar('original_url', { length: 500 }),
+        localPath: varchar('local_path', { length: 500 }).notNull(),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+    },
+    (table) => [
+        index('shopee_images_session_idx').on(table.sessionId),
+        index('shopee_images_product_idx').on(table.productId),
+        index('shopee_images_type_idx').on(table.type),
+    ]
+);
+
+/**
+ * Score — hasil scoring AI per item (shop atau product).
+ * 1 session = 1 shop score + banyak product score.
+ */
+export const shopeeScores = mysqlTable(
+    'shopee_scores',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        sessionId: int('session_id').notNull().references(() => shopeeScrapeSessions.id, { onDelete: 'cascade' }),
+        productId: int('product_id').references(() => shopeeProducts.id, { onDelete: 'cascade' }),
+        itemType: mysqlEnum('item_type', ['shop', 'product']).notNull(),
+        // Score per kategori (0-100)
+        bannerScore: int('banner_score'),
+        logoScore: int('logo_score'),
+        bioScore: int('bio_score'),
+        titleScore: int('title_score'),
+        descriptionScore: int('description_score'),
+        photoScore: int('photo_score'),
+        // Aggregate
+        totalScore: int('total_score'),
+        verdict: mysqlEnum('verdict', ['good', 'needs_improvement', 'poor']),
+        // Detail feedback dari AI
+        feedback: json('feedback').$type<JsonRecord>(),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [
+        index('shopee_scores_session_idx').on(table.sessionId),
+        index('shopee_scores_product_idx').on(table.productId),
+        index('shopee_scores_item_type_idx').on(table.itemType),
+    ]
+);
+
+/**
+ * Draft — hasil generate text/template/composite prompt dari AI.
+ * 1 session = 1 shop draft + banyak product draft.
+ * Status: pending (default), approved (user setujui), rejected (user tolak).
+ */
+export const shopeeDrafts = mysqlTable(
+    'shopee_drafts',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        sessionId: int('session_id').notNull().references(() => shopeeScrapeSessions.id, { onDelete: 'cascade' }),
+        productId: int('product_id').references(() => shopeeProducts.id, { onDelete: 'cascade' }),
+        itemType: mysqlEnum('item_type', ['shop', 'product']).notNull(),
+        draftType: mysqlEnum('draft_type', ['shop_bio', 'product_title', 'product_description', 'template_prompt', 'composite_prompt']),
+        content: longtext('content'),
+        // Untuk image drafts (template/composite prompt) — URL image generated
+        generatedImageUrl: varchar('generated_image_url', { length: 500 }),
+        status: mysqlEnum('status', ['pending', 'approved', 'rejected']).notNull().default('pending'),
+        createdAt: timestamp('created_at').defaultNow().notNull(),
+        updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [
+        index('shopee_drafts_session_idx').on(table.sessionId),
+        index('shopee_drafts_product_idx').on(table.productId),
+        index('shopee_drafts_status_idx').on(table.status),
+        index('shopee_drafts_type_idx').on(table.draftType),
+    ]
+);
+
+// ─── Shopee Optimization Relations ─────────────────────────────────────────
+
+export const shopeeScrapeSessionRelations = relations(shopeeScrapeSessions, ({ one, many }) => ({
+    shop: one(shopeeShops, {
+        fields: [shopeeScrapeSessions.id],
+        references: [shopeeShops.sessionId],
+    }),
+    products: many(shopeeProducts),
+    images: many(shopeeImages),
+    scores: many(shopeeScores),
+    drafts: many(shopeeDrafts),
+}));
+
+export const shopeeShopRelations = relations(shopeeShops, ({ one }) => ({
+    session: one(shopeeScrapeSessions, {
+        fields: [shopeeShops.sessionId],
+        references: [shopeeScrapeSessions.id],
+    }),
+}));
+
+export const shopeeProductRelations = relations(shopeeProducts, ({ one, many }) => ({
+    session: one(shopeeScrapeSessions, {
+        fields: [shopeeProducts.sessionId],
+        references: [shopeeScrapeSessions.id],
+    }),
+    images: many(shopeeImages),
+    scores: many(shopeeScores),
+    drafts: many(shopeeDrafts),
+}));
+
+export const shopeeImageRelations = relations(shopeeImages, ({ one }) => ({
+    session: one(shopeeScrapeSessions, {
+        fields: [shopeeImages.sessionId],
+        references: [shopeeScrapeSessions.id],
+    }),
+    product: one(shopeeProducts, {
+        fields: [shopeeImages.productId],
+        references: [shopeeProducts.id],
+    }),
+}));
+
+export const shopeeScoreRelations = relations(shopeeScores, ({ one }) => ({
+    session: one(shopeeScrapeSessions, {
+        fields: [shopeeScores.sessionId],
+        references: [shopeeScrapeSessions.id],
+    }),
+    product: one(shopeeProducts, {
+        fields: [shopeeScores.productId],
+        references: [shopeeProducts.id],
+    }),
+}));
+
+export const shopeeDraftRelations = relations(shopeeDrafts, ({ one }) => ({
+    session: one(shopeeScrapeSessions, {
+        fields: [shopeeDrafts.sessionId],
+        references: [shopeeScrapeSessions.id],
+    }),
+    product: one(shopeeProducts, {
+        fields: [shopeeDrafts.productId],
+        references: [shopeeProducts.id],
+    }),
+}));
