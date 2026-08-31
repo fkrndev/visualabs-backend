@@ -57,3 +57,4 @@ Thumbs.db
 # Tarball source Hermes untuk tombol "Install Agent" di VBOX.
 # Artifact build (~70MB), dihasilkan `bun run scripts/pack-hermes.ts`.
 storage/hermes/
+storage/extension/

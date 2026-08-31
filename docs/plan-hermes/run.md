@@ -60,6 +60,11 @@ gak ada pesan apa pun yang jelasin itu. VBOX nge-slug nama mesin dulu (huruf kec
 angka, hubung, maks 24 char) karena `node_id` masuk query param dan nama komputer
 Windows bebas berisi spasi/garis bawah/non-ASCII.
 
+Nama mesin di label diambil `relay_node.py` dari `COMPUTERNAME` → `HOSTNAME` →
+`platform.node()`. Dua yang pertama cuma ada di Windows (`HOSTNAME` itu shell var
+yang tidak di-export di macOS/Linux), jadi sebelum 24 Agu 2026 semua node non-Windows
+mengirim label `Hermes Lokal` yang sama persis.
+
 Label dropdown jadi `Nama · NAMA-MESIN` **cuma** buat id yang bawa akhiran mesin; node
 lama tetep tampil `Nama` doang. Dan halaman Agent sekarang milih node sendiri duluan —
 sebelumnya `nodes[0]`, yang begitu daftarnya panjang bisa diam-diam nyambungin kamu ke

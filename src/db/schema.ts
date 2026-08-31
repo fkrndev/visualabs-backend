@@ -3088,3 +3088,85 @@ export const teamSkillUsageRelations = relations(teamSkillUsage, ({ one }) => ({
     }),
     user: one(users, { fields: [teamSkillUsage.userId], references: [users.id] }),
 }));
+
+// ── Capture data marketplace dari layar tim ──────────────────────────────────
+// Rencana lengkap: docs/vbox/capture-plan.md
+//
+// Extension `vbox-controller` menyadap response JSON yang sudah diminta sendiri
+// oleh halaman Shopee/TikTok Seller Center, lalu mengirimnya ke sini. Dua tabel:
+// `captureEndpoints` adalah katalog sekaligus saklar (isi hanya disimpan kalau
+// `captureBody` menyala), `capturePayloads` adalah datanya.
+
+export const captureEndpoints = mysqlTable(
+    'capture_endpoints',
+    {
+        id: int('id').autoincrement().primaryKey(),
+        platform: varchar('platform', { length: 32 }).notNull(),
+        // host + pathname saja. Query TIDAK ikut: URL kedua platform penuh
+        // parameter yang berubah tiap request (SPC_CDS, X-Bogus, timestamp),
+        // jadi kalau ikut, setiap request jadi endpoint "baru".
+        endpointKey: varchar('endpoint_key', { length: 255 }).notNull(),
+        sampleUrl: text('sample_url'),
+        captureBody: tinyint('capture_body').default(0).notNull(),
+        // Contoh isi: "broad_gmv dibagi 100000". Satuan berbeda antar endpoint,
+        // bukan antar platform — Shopee ads pakai 1/100000, TikTok rupiah polos.
+        unitNote: varchar('unit_note', { length: 255 }),
+        hitCount: int('hit_count').default(0).notNull(),
+        note: text('note'),
+        firstSeenAt: timestamp('first_seen_at').defaultNow().notNull(),
+        lastSeenAt: timestamp('last_seen_at').defaultNow().onUpdateNow().notNull(),
+    },
+    (table) => [
+        uniqueIndex('capture_endpoints_key_unique').on(table.platform, table.endpointKey),
+        index('capture_endpoints_body_idx').on(table.captureBody),
+    ]
+);
+
+export const capturePayloads = mysqlTable(
+    'capture_payloads',
+    {
+        id: bigint('id', { mode: 'number' }).autoincrement().primaryKey(),
+        platform: varchar('platform', { length: 32 }).notNull(),
+        endpointKey: varchar('endpoint_key', { length: 255 }).notNull(),
+        // Identitas akun ikut profil Chrome — satu profil dipakai untuk satu klien.
+        // Selalu terisi, tidak seperti shopId (90% response Shopee tidak memuatnya).
+        chromeProfileUuid: varchar('chrome_profile_uuid', { length: 36 }).notNull(),
+        customerId: int('customer_id').references(() => customers.id, { onDelete: 'set null' }),
+        userId: int('user_id').references(() => users.id, { onDelete: 'set null' }),
+        // Pemeriksa silang, bukan identitas: kalau berubah untuk pasangan profil +
+        // platform yang sama, berarti ada yang login ke toko lain di profil itu.
+        shopId: varchar('shop_id', { length: 64 }),
+        shopName: varchar('shop_name', { length: 255 }),
+        method: varchar('method', { length: 8 }).notNull(),
+        queryJson: json('query_json').$type<JsonRecord>(),
+        requestBody: longtext('request_body'),
+        payloadHash: varchar('payload_hash', { length: 64 }).notNull(),
+        payload: longtext('payload').notNull(),
+        capturedAt: timestamp('captured_at').defaultNow().notNull(),
+    },
+    (table) => [
+        // Kunci dedup. Tim menyegarkan halaman berkali-kali dengan data yang sama;
+        // yang tersimpan tetap satu baris. Kalau datanya berubah, pergerakan dalam
+        // satu hari ikut terekam tanpa usaha tambahan.
+        uniqueIndex('capture_payloads_dedup_unique').on(
+            table.chromeProfileUuid,
+            table.platform,
+            table.endpointKey,
+            table.payloadHash
+        ),
+        index('capture_payloads_lookup_idx').on(
+            table.customerId,
+            table.platform,
+            table.endpointKey,
+            table.capturedAt
+        ),
+    ]
+);
+
+export const capturePayloadRelations = relations(capturePayloads, ({ one }) => ({
+    customer: one(customers, {
+        fields: [capturePayloads.customerId],
+        references: [customers.id],
+    }),
+    user: one(users, { fields: [capturePayloads.userId], references: [users.id] }),
+}));

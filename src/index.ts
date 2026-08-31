@@ -46,6 +46,8 @@ import { driveFolderRoutes } from "./routes/driveFolders";
 import llmGatewayRoutes from "./routes/llmGateway";
 import relayRoutes from "./routes/relay";
 import hermesRoutes from "./routes/hermes";
+import extensionRoutes from "./routes/extension";
+import captureRoutes from "./routes/capture";
 import teamSkillRoutes from "./routes/teamSkills";
 // HR modules (Fase 1–3: organisasi, karyawan, presensi, cuti)
 import hrBranchRoutes from "./routes/hr/branches";
@@ -152,6 +154,10 @@ app.route("/relay", relayRoutes);
 // Distribusi source Hermes ke VBOX (tombol "Install Agent"). Di-mount di sini
 // karena alasan yang sama: jangan sampai kena middleware wildcard route "/".
 app.route("/hermes", hermesRoutes);
+// Distribusi build extension vbox-controller ke VBOX (auto-update tanpa konfirmasi).
+// Sama seperti /hermes: harus sebelum route "/" agar tidak kena middleware wildcard.
+app.route("/extension", extensionRoutes);
+app.route("/capture", captureRoutes);
 // Team Skill Hub — registry skill Hermes milik tim. Sama: sebelum route "/".
 app.route("/team-skills", teamSkillRoutes);
 
