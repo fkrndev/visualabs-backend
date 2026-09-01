@@ -11,9 +11,14 @@ import {
 } from "../db/schema";
 import { requireAuth, requireManagement, getAuthUserId } from "../middleware/auth";
 import { logAuditEvent, getClientIp, getUserAgent } from "../utils/audit";
-import { scrapePublicShopViaWorker, scrapeProductDetailsViaWorker } from "../lib/scraperBridge";
+import { scrapePublicShopViaWorker, scrapeProductDetailsViaWorker, resumeWorker } from "../lib/scraperBridge";
 import { analyzeSession } from "../lib/shopeeAnalyzer";
+import { setProgress, clearProgress, getProgress } from "../lib/shopeeProgress";
 import { geminiText } from "../lib/gemini";
+
+/** Pending verify resolvers — map sessionId → resolve function.
+ *  Diisi oleh onVerifyWait callback, di-resolve oleh endpoint verify-resume. */
+const pendingVerifyResolvers = new Map<number, () => void>();
 
 /**
  * Shopee Optimization — Session CRUD + auto-run.
@@ -100,6 +105,7 @@ router.get("/sessions/:id", requireAuth, requireManagement, async (c) => {
       products,
       scores,
       drafts,
+      progress: getProgress(id),
     },
   });
 });
@@ -356,18 +362,49 @@ router.delete("/sessions/:id", requireAuth, requireManagement, async (c) => {
 async function runScrapeAndAnalyze(sessionId: number, cdpWsUrl: string, shopUrl: string): Promise<void> {
   console.log(`[shopeeOptimization] session ${sessionId}: starting scrape + analyze (shop=${shopUrl})`);
 
+  // onVerifyWait: update session status ke 'waiting_verify' saat anti-bot terdeteksi.
+  // Promise resolve ketika user klik "Sudah verify" di FE (via endpoint verify-resume).
+  // Reusable untuk shop page scrape & product detail scrape.
+  const onVerifyWait = async (verifyUrl: string) => {
+    console.log(`[shopeeOptimization] session ${sessionId}: anti-bot detected (${verifyUrl}), waiting for manual verify...`);
+    await db.update(shopeeScrapeSessions).set({
+      status: "waiting_verify",
+      errorReason: "anti_bot",
+      updatedAt: new Date(),
+    }).where(eq(shopeeScrapeSessions.id, sessionId));
+    // Wait until user clicks "Sudah verify" → endpoint verify-resume calls resolveVerify
+    await new Promise<void>((resolve) => {
+      pendingVerifyResolvers.set(sessionId, resolve);
+    });
+  };
+
   try {
     // Phase 1: Scrape public shop page via Node worker
+    // Anti-bot check sebelum scrape: jika shop page kena anti-bot, modal verify muncul.
     console.log(`[shopeeOptimization] session ${sessionId}: scraping public shop...`);
-    const { shop, products: shopProducts } = await scrapePublicShopViaWorker(cdpWsUrl, shopUrl);
+    setProgress(sessionId, { phase: "analyzing", step: 0, total: 1, message: "Scraping shop page..." });
+    const { shop, products: shopProducts } = await scrapePublicShopViaWorker(cdpWsUrl, shopUrl, sessionId, onVerifyWait);
+    // Reset status ke scraping setelah verify selesai (jika sebelumnya waiting_verify)
+    await db.update(shopeeScrapeSessions).set({
+      status: "scraping",
+      errorReason: null,
+      updatedAt: new Date(),
+    }).where(eq(shopeeScrapeSessions.id, sessionId));
 
     // Phase 1b: Scrape product detail pages (jika ada product URLs)
     let productDetails: any[] = [];
     if (shopProducts && shopProducts.length > 0) {
-      const productUrls = shopProducts.map((p: any) => p.productUrl).filter(Boolean);
+      const productUrls = shopProducts.map((p: any) => p.productUrl).filter(Boolean).slice(0, 5);
       if (productUrls.length > 0) {
         console.log(`[shopeeOptimization] session ${sessionId}: scraping ${productUrls.length} product details...`);
-        productDetails = await scrapeProductDetailsViaWorker(cdpWsUrl, productUrls);
+        setProgress(sessionId, { phase: "analyzing", step: 0, total: 1, message: `Scraping ${productUrls.length} product details...` });
+        productDetails = await scrapeProductDetailsViaWorker(cdpWsUrl, productUrls, shopUrl, sessionId, onVerifyWait);
+        // Reset status ke scraping setelah verify selesai
+        await db.update(shopeeScrapeSessions).set({
+          status: "scraping",
+          errorReason: null,
+          updatedAt: new Date(),
+        }).where(eq(shopeeScrapeSessions.id, sessionId));
       }
     }
 
@@ -438,9 +475,22 @@ async function runScrapeAndAnalyze(sessionId: number, cdpWsUrl: string, shopUrl:
       .where(eq(shopeeScrapeSessions.id, sessionId));
 
     console.log(`[shopeeOptimization] session ${sessionId}: scrape done, starting analyze...`);
+    setProgress(sessionId, { phase: "analyzing", step: 0, total: 1, message: "Analyzing shop & products..." });
 
     // Phase 2: Analyze (score + verdict)
     await analyzeSession(sessionId);
+
+    // Phase 3: Auto-generate text drafts (bio, title, description)
+    console.log(`[shopeeOptimization] session ${sessionId}: analyze done, generating drafts...`);
+    setProgress(sessionId, { phase: "generating_drafts", step: 0, total: 1, message: "Generating suggestions..." });
+    try {
+      const draftCount = await generateSessionDrafts(sessionId, (msg, step, total) => {
+        setProgress(sessionId, { phase: "generating_drafts", step: step ?? 0, total: total ?? 1, message: msg });
+      });
+      console.log(`[shopeeOptimization] session ${sessionId}: generated ${draftCount} drafts`);
+    } catch (draftErr) {
+      console.error(`[shopeeOptimization] session ${sessionId}: draft generation failed (non-fatal):`, draftErr);
+    }
 
     // Done
     await db
@@ -450,11 +500,15 @@ async function runScrapeAndAnalyze(sessionId: number, cdpWsUrl: string, shopUrl:
         completedAt: new Date(),
       })
       .where(eq(shopeeScrapeSessions.id, sessionId));
+    setProgress(sessionId, { phase: "done", step: 1, total: 1, message: "Completed" });
+    setTimeout(() => clearProgress(sessionId), 30_000);
 
     console.log(`[shopeeOptimization] session ${sessionId}: done`);
   } catch (err) {
     console.error(`[shopeeOptimization] session ${sessionId}: failed:`, err);
     const errorMessage = err instanceof Error ? err.message : "Unknown error";
+    setProgress(sessionId, { phase: "error", step: 0, total: 1, message: errorMessage });
+    setTimeout(() => clearProgress(sessionId), 30_000);
 
     // Map error ke error_reason
     let errorReason = "analyze_error";
@@ -473,6 +527,541 @@ async function runScrapeAndAnalyze(sessionId: number, cdpWsUrl: string, shopUrl:
       })
       .where(eq(shopeeScrapeSessions.id, sessionId));
   }
+}
+
+// ─── Generate drafts (reusable — dipanggil dari background flow & endpoint) ──
+
+async function generateSessionDrafts(sessionId: number, onProgress?: (msg: string, step?: number, total?: number) => void): Promise<number> {
+  // Fetch shop + products + scores
+  const [shop, products, scores] = await Promise.all([
+    db.select().from(shopeeShops).where(eq(shopeeShops.sessionId, sessionId)),
+    db.select().from(shopeeProducts).where(eq(shopeeProducts.sessionId, sessionId)),
+    db.select().from(shopeeScores).where(eq(shopeeScores.sessionId, sessionId)),
+  ]);
+
+  console.log(`[drafts] session ${sessionId}: shop=${!!shop[0]}, products=${products.length}, scores=${scores.length}`);
+
+  // Estimate total drafts for progress
+  const heroCount = shop[0] ? ((shop[0].heroImages as string[] | null) || []).length : 0;
+  const bottomHeroCount = shop[0] ? ((shop[0].bottomHeroImages as string[] | null) || []).length : 0;
+  const productPhotoCount = products.reduce((sum, p) => {
+    const imgs = ((p.images as string[] | null) || []).slice(0, 5);
+    const thumb = (p as any).thumbnailLocal || (p as any).thumbnailUrl || null;
+    return sum + [...new Set([thumb, ...imgs].filter(Boolean))].length;
+  }, 0);
+  const totalDrafts = (shop[0] ? 1 + 1 + heroCount + bottomHeroCount + 1 + 1 : 0) + products.length * 2 + productPhotoCount + 1;
+  let draftStep = 0;
+  const tickProgress = (msg: string) => {
+    draftStep++;
+    onProgress?.(msg, draftStep, totalDrafts);
+  };
+
+  const drafts: Array<{
+    sessionId: number;
+    productId: number | null;
+    imageIndex: number | null;
+    itemType: "shop" | "product";
+    draftType:
+      | "shop_bio"
+      | "product_title"
+      | "product_description"
+      | "template_prompt"
+      | "composite_prompt"
+      | "banner_prompt"
+      | "logo_prompt"
+      | "hero_prompt"
+      | "bottom_hero_prompt"
+      | "template_design"
+      | "product_photo_prompt"
+      | "combine_prompt";
+    content: string;
+  }> = [];
+
+  // Hapus drafts lama di AWAL (sebelum generate) supaya FE lihat incremental update
+  await db
+    .delete(shopeeDrafts)
+    .where(eq(shopeeDrafts.sessionId, sessionId));
+
+  // Helper: push ke array + insert ke DB langsung (incremental)
+  const addDraft = async (d: (typeof drafts)[number]) => {
+    drafts.push(d);
+    await db.insert(shopeeDrafts).values(d);
+  };
+
+  // Generate shop bio draft (kalau shop ada)
+  if (shop[0]) {
+    const shopData = shop[0];
+    const shopScore = scores.find((s) => s.itemType === "shop");
+    const feedbackBio = (shopScore?.feedback as Record<string, string> | null)?.bio;
+
+    const prompt = `You are a Shopee store optimization expert. Generate an optimized shop bio/description for this Shopee store.
+
+Current shop info:
+- Name: ${shopData.shopName || "N/A"}
+- Current bio: ${shopData.shopBio || "(empty)"}
+- Stats: ${JSON.stringify(shopData.shopStats || {})}
+- Current bio score: ${shopScore?.bioScore ?? "N/A"}/100
+- Bio feedback: ${feedbackBio || "N/A"}
+
+Generate 1 optimized shop bio (max 200 characters) that:
+- Clear & professional
+- Contains relevant keywords for Shopee search
+- Highlights shop's strengths
+- Appropriate tone for Indonesian marketplace
+
+Respond with ONLY the bio text (no JSON, no explanation).`;
+
+    const bioDraft = await callGeminiTextInternal(prompt, "shop_bio");
+    if (bioDraft) {
+      await addDraft({
+        sessionId,
+        productId: null,
+        imageIndex: null,
+        itemType: "shop",
+        draftType: "shop_bio",
+        content: bioDraft,
+      });
+      tickProgress("Generated shop bio draft");
+    }
+  }
+
+  // Generate product title & description drafts
+  for (const product of products) {
+    const productScore = scores.find(
+      (s) => s.productId === product.id && s.itemType === "product",
+    );
+    const feedbackTitle = (productScore?.feedback as Record<string, string> | null)?.title;
+    const feedbackDesc = (productScore?.feedback as Record<string, string> | null)?.description;
+
+    // Title draft
+    if (product.title) {
+      const prompt = `You are a Shopee product optimization expert. Generate an optimized product title for this Shopee product.
+
+Current product info:
+- Title: ${product.title}
+- Price: ${product.price || "N/A"}
+- Categories: ${JSON.stringify(product.categories || [])}
+- Current title score: ${productScore?.titleScore ?? "N/A"}/100
+- Title feedback: ${feedbackTitle || "N/A"}
+
+Generate 1 optimized product title (max 120 characters) that:
+- Clear & descriptive
+- Contains relevant keywords for Shopee search
+- Professional tone
+- Appropriate length
+
+Respond with ONLY the title text (no JSON, no explanation).`;
+
+      const titleDraft = await callGeminiTextInternal(prompt, `product_title#${product.id}`);
+      if (titleDraft) {
+        await addDraft({
+          sessionId,
+          productId: product.id,
+          imageIndex: null,
+          itemType: "product",
+          draftType: "product_title",
+          content: titleDraft,
+        });
+        tickProgress(`Generated product ${product.id} title draft`);
+      }
+    }
+
+    // Description draft
+    if (product.description || product.title) {
+      const prompt = `You are a Shopee product optimization expert. Generate an optimized product description for this Shopee product.
+
+Current product info:
+- Title: ${product.title || "N/A"}
+- Description: ${product.description || "(empty)"}
+- Price: ${product.price || "N/A"}
+- Categories: ${JSON.stringify(product.categories || [])}
+- Variants: ${JSON.stringify(product.variants || {})}
+- Current description score: ${productScore?.descriptionScore ?? "N/A"}/100
+- Description feedback: ${feedbackDesc || "N/A"}
+
+Generate 1 optimized product description (max 1000 characters) that:
+- Clear & informative
+- Contains product specifications
+- Professional tone
+- Contains relevant keywords
+- Easy to read (use bullet points if appropriate)
+
+Respond with ONLY the description text (no JSON, no explanation).`;
+
+      const descDraft = await callGeminiTextInternal(prompt, `product_description#${product.id}`);
+      if (descDraft) {
+        await addDraft({
+          sessionId,
+          productId: product.id,
+          imageIndex: null,
+          itemType: "product",
+          draftType: "product_description",
+          content: descDraft,
+        });
+        tickProgress(`Generated product ${product.id} description draft`);
+      }
+    }
+  }
+
+  // ─── Image optimization prompts ──────────────────────────────────────────
+  // Part A: Shop image prompts
+  // - banner & logo: 1 prompt each (single image)
+  // - hero & bottom_hero: 1 prompt PER image (loop sebanyak jumlah images)
+  if (shop[0]) {
+    const shopData = shop[0];
+    const shopScore = scores.find((s) => s.itemType === "shop");
+    const fbDesc = (key: string) => (shopScore?.feedback as Record<string, string> | null)?.[key] || "N/A";
+
+    // Helper: build & send prompt for a single shop image
+    // Template disesuaikan per draftType — format optimized prompt
+    const generateShopImagePrompt = async (
+      draftType: "banner_prompt" | "logo_prompt" | "hero_prompt" | "bottom_hero_prompt",
+      subject: string,
+      dimensions: string,
+      aspectRatio: string,
+      description: string,
+      imageUrl: string,
+      imageIndex: number | null, // null untuk banner/logo, 0-based untuk hero/bottom_hero
+      feedback: string, // AI feedback for this image
+    ) => {
+      const indexLabel = imageIndex !== null ? ` (Image ${imageIndex + 1})` : "";
+      const shopName = shopData.shopName || "N/A";
+      const shopBio = shopData.shopBio || "N/A";
+
+      // Template berbeda per draftType
+      let prompt: string;
+
+      if (draftType === "hero_prompt") {
+        prompt = `You are an expert Shopee store branding specialist and AI prompt engineer.
+
+Generate a detailed image generation prompt to OPTIMIZE this store's shop hero/banner image for the Shopee marketplace.
+
+Shop Info:
+- Name: ${shopName}
+- Bio: ${shopBio}
+- Current Shop Hero Image Description: ${description}
+- Current Shop Hero Image Feedback: ${feedback}
+- Shop Hero Image URL: ${imageUrl}
+
+CRITICAL — SOURCE IMAGE REFERENCE & ADAPTIVE CONTEXT:
+The generated prompt MUST explicitly instruct the AI image generator to:
+- USE the attached image as the primary visual reference to preserve the exact product design, material texture, structure, and refined craftsmanship.
+- Always refer to the reference photo as "the attached image" or "the attached source photo" (NEVER use technical filenames like image_0.png).
+- MATCH THE SHOT CONTEXT AUTOMATICALLY: If the attached image features a model, maintain a model lifestyle shot with the same pose/context. If the attached image is product-only, maintain a standalone product shot without a model.
+- ADDRESS THE FEEDBACK: The generated prompt MUST explicitly address and fix the issues raised in the AI Feedback above.
+- OPTIMIZE VISUALS & BRANDING FOR SHOPEE HERO BANNER:
+  - Upgrade the current layout into a high-converting, professional e-commerce hero banner optimized for a ${dimensions} aspect ratio (${aspectRatio}).
+  - Enhance dark/stark background elements with modern, sophisticated aesthetic accents (such as soft architectural shadows, elegant silk or marble textures, or refined neutral/warm lighting) while maintaining the shop's sleek, minimalist identity.
+  - Elevate lighting to create bright, commercial-grade highlights on the product materials, clarity, and luster.
+  - Ensure seamless composition with room for clean, legible shop branding elements ("${shopName}") if rendered, matching a luxurious, modern, and high-end Korean aesthetic.
+
+Output Requirement: Respond with ONLY the finalized prompt text in English (no intro, no markdown explanation, no JSON).`;
+      } else if (draftType === "bottom_hero_prompt") {
+        prompt = `You are an expert Shopee store branding specialist and AI prompt engineer.
+
+Generate a detailed image generation prompt to OPTIMIZE this store's shop bottom hero/promo image for the Shopee marketplace.
+
+Shop Info:
+- Name: ${shopName}
+- Bio: ${shopBio}
+- Current Shop Bottom Hero Image Description: ${description}
+- Current Shop Bottom Hero Image Feedback: ${feedback}
+- Shop Bottom Hero Image URL: ${imageUrl}
+
+CRITICAL — SOURCE IMAGE REFERENCE & ADAPTIVE CONTEXT:
+The generated prompt MUST explicitly instruct the AI image generator to:
+- USE the attached image as the primary visual reference to preserve the exact product design, material texture, structure, and refined craftsmanship.
+- Always refer to the reference photo as "the attached image" or "the attached source photo" (NEVER use technical filenames like image_0.png).
+- MATCH THE SHOT CONTEXT AUTOMATICALLY: If the attached image features a model, maintain a model lifestyle shot with the same pose/context. If the attached image is product-only, maintain a standalone product shot without a model.
+- ADDRESS THE FEEDBACK: The generated prompt MUST explicitly address and fix the issues raised in the AI Feedback above.
+- OPTIMIZE VISUALS & BRANDING FOR SHOPEE BOTTOM HERO PROMO:
+  - Upgrade the current layout into a high-converting, professional e-commerce promo banner optimized for a ${dimensions} aspect ratio (${aspectRatio}).
+  - Enhance dark/stark background elements with modern, sophisticated aesthetic accents (such as soft architectural shadows, elegant silk or marble textures, or refined neutral/warm lighting) while maintaining the shop's sleek, minimalist identity.
+  - Elevate lighting to create bright, commercial-grade highlights on the product materials, clarity, and luster.
+  - Ensure seamless composition with room for clean, legible shop branding elements ("${shopName}") and promo messaging if rendered, matching a luxurious, modern, and high-end Korean aesthetic.
+
+Output Requirement: Respond with ONLY the finalized prompt text in English (no intro, no markdown explanation, no JSON).`;
+      } else if (draftType === "banner_prompt") {
+        prompt = `You are an expert Shopee store branding specialist and AI prompt engineer.
+
+Generate a detailed image generation prompt to OPTIMIZE this store's shop banner/cover image for the Shopee marketplace.
+
+Shop Info:
+- Name: ${shopName}
+- Bio: ${shopBio}
+- Current Shop Banner Image Description: ${description}
+- Current Shop Banner Image Feedback: ${feedback}
+- Shop Banner Image URL: ${imageUrl}
+
+CRITICAL — SOURCE IMAGE REFERENCE & ADAPTIVE CONTEXT:
+The generated prompt MUST explicitly instruct the AI image generator to:
+- USE the attached image as the primary visual reference to preserve the exact content, branding, and visual identity.
+- Always refer to the reference photo as "the attached image" or "the attached source photo" (NEVER use technical filenames like image_0.png).
+- ADDRESS THE FEEDBACK: The generated prompt MUST explicitly address and fix the issues raised in the AI Feedback above.
+- OPTIMIZE VISUALS & BRANDING FOR SHOPEE BANNER:
+  - Upgrade the current layout into a high-converting, professional e-commerce shop banner optimized for a ${dimensions} aspect ratio (${aspectRatio}).
+  - Include the shop name "${shopName}" and tagline as clean, legible text elements.
+  - Enhance background with modern, sophisticated aesthetic accents while maintaining the shop's brand identity.
+  - Elevate lighting to create bright, commercial-grade visuals.
+  - Ensure seamless composition with clear branding & messaging, matching a professional, modern e-commerce aesthetic.
+
+Output Requirement: Respond with ONLY the finalized prompt text in English (no intro, no markdown explanation, no JSON).`;
+      } else {
+        // logo_prompt
+        prompt = `You are an expert Shopee store branding specialist and AI prompt engineer.
+
+Generate a detailed image generation prompt to OPTIMIZE this store's shop logo for the Shopee marketplace.
+
+Shop Info:
+- Name: ${shopName}
+- Bio: ${shopBio}
+- Current Shop Logo Image Description: ${description}
+- Current Shop Logo Image Feedback: ${feedback}
+- Shop Logo Image URL: ${imageUrl}
+
+CRITICAL — SOURCE IMAGE REFERENCE & ADAPTIVE CONTEXT:
+The generated prompt MUST explicitly instruct the AI image generator to:
+- USE the attached image as the primary visual reference to preserve the exact logo design, typography, and brand identity.
+- Always refer to the reference photo as "the attached image" or "the attached source photo" (NEVER use technical filenames like image_0.png).
+- ADDRESS THE FEEDBACK: The generated prompt MUST explicitly address and fix the issues raised in the AI Feedback above.
+- OPTIMIZE VISUALS & BRANDING FOR SHOPEE LOGO:
+  - Upgrade the current logo into a clear, recognizable, professional shop logo optimized for a ${dimensions} (${aspectRatio}).
+  - Ensure the logo is clearly readable and recognizable at small sizes (Shopee circular avatar format).
+  - Maintain the shop's brand identity (colors, typography style, tone).
+  - Enhance contrast, clarity, and visual impact for Shopee marketplace.
+  - Strong brand representation with professional appearance.
+
+Output Requirement: Respond with ONLY the finalized prompt text in English (no intro, no markdown explanation, no JSON).`;
+      }
+
+      const label = imageIndex !== null ? `${draftType}#${imageIndex}` : draftType;
+      const result = await callGeminiTextInternal(prompt, label);
+      if (result) {
+        await addDraft({
+          sessionId,
+          productId: null,
+          imageIndex,
+          itemType: "shop",
+          draftType,
+          content: result,
+        });
+        tickProgress(`Generated ${label} draft`);
+      }
+    };
+
+    // 1. Banner (single)
+    const bannerUrl = shopData.bannerLocal || shopData.bannerUrl || "N/A";
+    await generateShopImagePrompt(
+      "banner_prompt", "shop banner/cover image", "1920x640", "3:1",
+      fbDesc("bannerDescription"), bannerUrl, null, fbDesc("banner"),
+    );
+
+    // 2. Logo (single)
+    const logoUrl = shopData.logoLocal || shopData.logoUrl || "N/A";
+    await generateShopImagePrompt(
+      "logo_prompt", "shop logo", "500x500", "1:1",
+      fbDesc("logoDescription"), logoUrl, null, fbDesc("logo"),
+    );
+
+    // 3. Hero (loop per image)
+    const heroImages = (shopData.heroImages as string[] | null) || [];
+    const heroDescriptions: string[] = (() => {
+      try { return JSON.parse(fbDesc("heroDescriptions")); } catch { return []; }
+    })();
+    const heroFeedbacks: string[] = (() => {
+      try { return JSON.parse(fbDesc("heroFeedbacks")); } catch { return []; }
+    })();
+    for (let i = 0; i < heroImages.length; i++) {
+      await generateShopImagePrompt(
+        "hero_prompt", "shop hero/carousel image", "1200x600", "2:1",
+        heroDescriptions[i] || "N/A", heroImages[i], i, heroFeedbacks[i] || fbDesc("hero"),
+      );
+    }
+
+    // 4. Bottom hero (loop per image)
+    const bottomHeroImages = (shopData.bottomHeroImages as string[] | null) || [];
+    const bottomHeroDescriptions: string[] = (() => {
+      try { return JSON.parse(fbDesc("bottomHeroDescriptions")); } catch { return []; }
+    })();
+    const bottomHeroFeedbacks: string[] = (() => {
+      try { return JSON.parse(fbDesc("bottomHeroFeedbacks")); } catch { return []; }
+    })();
+    for (let i = 0; i < bottomHeroImages.length; i++) {
+      await generateShopImagePrompt(
+        "bottom_hero_prompt", "shop bottom hero/promo image", "1200x400", "3:1",
+        bottomHeroDescriptions[i] || "N/A", bottomHeroImages[i], i, bottomHeroFeedbacks[i] || fbDesc("bottomHero"),
+      );
+    }
+  }
+
+  // Part B: Template Design (Frame Foto Produk / Bingkai Produk Shopee — 1 per session)
+  // Template design = frame/bingkai template yang dipakai untuk bungkus semua foto produk
+  // supaya konsisten dan menarik (ada logo toko, decorative border, watermark).
+  if (shop[0]) {
+    const shopData = shop[0];
+    const shopScore = scores.find((s) => s.itemType === "shop");
+    const logoDescription = (shopScore?.feedback as Record<string, string> | null)?.logoDescription || (shopScore?.feedback as Record<string, string> | null)?.logo || "N/A";
+    const visualAesthetics = (shopScore?.feedback as Record<string, string> | null)?.visualAesthetics || "Clean, professional, modern e-commerce aesthetic.";
+    const brandColorPalette = (shopScore?.feedback as Record<string, string> | null)?.brandColorPalette || "Neutral tones with brand accent colors.";
+
+    const prompt = `You are a Shopee product frame and template design expert. Generate a detailed, highly specific image generation prompt (in English) for a PRODUCT FRAME TEMPLATE (Bingkai Foto Produk Shopee) that will be used as a full-bleed overlay/border for a shop catalog.
+
+Goal: Create a consistent, professional overlay template for all product photos in the shop, ensuring the referenced logo is centered inside a circular frame without obscuring the product area.
+
+Shop Context & Brand Identity:
+- Shop Name: "${shopData.shopName || "N/A"}"
+- Shop Bio: ${shopData.shopBio || "N/A"}
+- Logo description: ${logoDescription}
+- Logo url: ${shopData.logoLocal || shopData.logoUrl || "N/A"}
+- Visual Aesthetics: ${visualAesthetics}
+- Brand Color Palette: ${brandColorPalette}
+
+CRITICAL INSTRUCTIONS FOR THE PROMPT GENERATION:
+
+1. CIRCULAR LOGO FRAME & UNTOUCHED LOGO:
+- The template MUST feature a dedicated CIRCULAR (ROUND) EMBLEM/FRAME for the logo.
+- The reference logo MUST be placed EXACTLY IN THE CENTER of this circular frame.
+- The AI generator MUST treat the attached reference logo as an EXACT, UNTOUCHED REPLICA (no re-styling, no color changing, no filters, no shape alterations).
+- Placement & Non-Obscurity: Place this circular logo frame strictly in a corner (e.g. top-left or top-center edge) integrated directly into the border structure. It MUST NOT overlap, intrude upon, or obscure the main product area in the center.
+
+2. FULL-BLEED LAYOUT & EDGES:
+- The frame border MUST touch all four edges (top, bottom, left, right) of the 1000x1000 square canvas with zero outer margin or padding.
+- The outer perimeter must feature a sleek, razor-thin border frame using the brand color palette above.
+
+3. BRANDING & TEXT:
+- Include the exact shop name "${shopData.shopName || ""}" rendered in a clean, modern, high-end typeface that matches the shop's visual aesthetics (e.g. along the bottom border or opposite corner from the logo). This text is separate from the logo.
+
+4. CLEAR & PROTECTED PRODUCT AREA:
+- The central 70-75% area of the 1000x1000 canvas MUST remain completely clear, clean, and unobscured (soft light grey or studio white neutral mockup background) to ensure product photos fit perfectly without being covered by any frame elements or the logo.
+
+5. NO AI SLOP / ZERO CLUTTER:
+- STRICTLY NO promotional badges, NO discount ribbons, NO decorative flares, NO generic gradient glows, NO floral ornamentations.
+- Use only purposeful, razor-sharp geometric lines, subtle corner accents, and high-end layout framing that match the shop's visual aesthetics.
+
+6. BRAND IDENTITY ALIGNMENT:
+- The frame design MUST align with the shop's visual aesthetics: ${visualAesthetics}
+- The color palette MUST be restricted to the brand colors: ${brandColorPalette}
+- Every design element must serve the brand identity — no generic or random decorations.
+
+Generate ONLY the final English prompt text for an image generator (like Midjourney or DALL-E 3). Do not include introductory text, conversational filler, markdown code blocks, or explanations.`;
+
+    const templateDesign = await callGeminiTextInternal(prompt, "template_design");
+    if (templateDesign) {
+      await addDraft({
+        sessionId,
+        productId: null,
+        imageIndex: null,
+        itemType: "shop",
+        draftType: "template_design",
+        content: templateDesign,
+      });
+      tickProgress("Generated template design draft");
+    }
+  }
+
+  // Part C: Product photo prompts (per product, PER PHOTO — optimize each source photo)
+  for (const product of products) {
+    const productScore = scores.find(
+      (s) => s.productId === product.id && s.itemType === "product",
+    );
+    const fb = (productScore?.feedback as Record<string, string> | null) || {};
+    const photoFeedbacks: string[] = (() => {
+      try { return JSON.parse(fb.photoFeedbacks || "[]"); } catch { return []; }
+    })();
+    const photoDescriptions: string[] = (() => {
+      try { return JSON.parse(fb.photoDescriptions || "[]"); } catch { return []; }
+    })();
+
+    // Build unique photos list (same as analyzer)
+    const thumbImg = (product as any).thumbnailLocal || (product as any).thumbnailUrl || null;
+    const productImages = ((product as any).images as string[] | null) || [];
+    const uniquePhotos = [...new Set([thumbImg, ...productImages.slice(0, 5)].filter(Boolean))] as string[];
+
+    for (let pi = 0; pi < uniquePhotos.length; pi++) {
+      const photoUrl = uniquePhotos[pi];
+      const photoDesc = photoDescriptions[pi] || fb.photoDescription || "N/A";
+      const photoFb = photoFeedbacks[pi] || fb.photo || "N/A";
+
+      const prompt = `You are an expert Shopee product photographer and AI prompt engineer.
+
+Generate a detailed image generation prompt to OPTIMIZE this product's photo (photo ${pi + 1} of ${uniquePhotos.length}) for the Shopee marketplace.
+
+Product Info:
+- Title: ${product.title || "N/A"}
+- Description: ${(product.description || "").slice(0, 500)}
+- Categories: ${JSON.stringify(product.categories || [])}
+- Photo Description: ${photoDesc}
+- Photo Feedback: ${photoFb}
+- Photo URL: ${photoUrl}
+
+CRITICAL — SOURCE IMAGE REFERENCE & ADAPTIVE CONTEXT:
+The generated prompt MUST explicitly instruct the AI image generator to:
+- USE the attached image as the primary visual reference to replicate the EXACT product design, shape, color, and details accurately.
+- MATCH THE SHOT TYPE AUTOMATICALLY: If the attached image is a lifestyle shot (featuring a model/hand wearing the product), maintain a model shot with the same pose/context. If the attached image is a product-only shot, keep it strictly as a standalone product shot without a model.
+- Always refer to the reference photo as "the attached image" or "the attached product photo" (NEVER use technical filenames like image_0.png).
+- OPTIMIZE VISUALS FOR SHOPEE: Upgrade dark or dull backgrounds into bright, high-end commercial studio settings (Korean aesthetic with clean soft-neutral tones), enhance metallic reflections and luster, refine soft studio lighting, and ensure pin-sharp macro focus on the product.
+- SPECIFY output details: 1000x1000 pixels (1:1 aspect ratio), 8k resolution, photorealistic commercial product photography.
+
+Output Requirement: Respond with ONLY the finalized prompt text in English (no intro, no markdown explanation, no JSON).`;
+
+      const photoPrompt = await callGeminiTextInternal(prompt, `product_photo_prompt#${product.id}#${pi}`);
+      if (photoPrompt) {
+        await addDraft({
+          sessionId,
+          productId: product.id,
+          imageIndex: pi,
+          itemType: "product",
+          draftType: "product_photo_prompt",
+          content: photoPrompt,
+        });
+        tickProgress(`Generated product ${product.id} photo ${pi + 1} prompt`);
+      }
+    }
+  }
+
+  // Part D: Combine prompt (shop level, 1 per session — generic instruction to overlay frame + product photo)
+  // User akan attach 2 image: frame template + optimized product photo → output = final catalog image
+  if (shop[0]) {
+    const prompt = `You are a Shopee catalog composition expert. Generate a detailed image generation prompt to COMBINE a product frame template with an optimized product photo.
+
+WORKFLOW:
+The user will attach 2 images when using this prompt:
+1. Frame template image (the shop's product frame/bingkai — generated from template_design prompt)
+2. Optimized product photo (generated from product_photo_prompt)
+
+The prompt MUST instruct the image generator to:
+- OVERLAY the frame template onto the product photo
+- PLACE the product photo in the clear center area of the frame
+- KEEP the frame's border, logo, decorative elements intact around the product
+- ENSURE the product is NOT covered/obstructed by frame elements
+- MAINTAIN both the frame's branding and the product's clarity
+- Output a single combined image (frame + product photo merged seamlessly)
+
+Generate a detailed prompt (in English) for an AI image generator to combine these 2 images into a final catalog image. Include:
+- Explicit instruction to use both attached images (frame template + product photo)
+- How to position/overlay them (product in center, frame as border overlay)
+- How to handle transparency/blending
+- Final output dimensions: 1000x1000 pixels
+- Quality requirements (seamless merge, no artifacts, professional)
+
+This is a GENERIC prompt — works for any product photo + frame combination from this shop. Respond with ONLY the prompt text (no JSON, no explanation).`;
+
+    const combinePrompt = await callGeminiTextInternal(prompt, "combine_prompt");
+    if (combinePrompt) {
+      await addDraft({
+        sessionId,
+        productId: null,
+        imageIndex: null,
+        itemType: "shop",
+        draftType: "combine_prompt",
+        content: combinePrompt,
+      });
+      tickProgress("Generated combine prompt draft");
+    }
+  }
+
+  console.log(`[drafts] session ${sessionId}: generated ${drafts.length} drafts`);
+  return drafts.length;
 }
 
 // ─── POST /sessions/:id/generate-drafts — generate text drafts (bio, title, description) ──
@@ -501,136 +1090,7 @@ router.post(
       );
     }
 
-    // Fetch shop + products + scores
-    const [shop, products, scores] = await Promise.all([
-      db.select().from(shopeeShops).where(eq(shopeeShops.sessionId, id)),
-      db.select().from(shopeeProducts).where(eq(shopeeProducts.sessionId, id)),
-      db.select().from(shopeeScores).where(eq(shopeeScores.sessionId, id)),
-    ]);
-
-    const drafts: Array<{
-      sessionId: number;
-      productId: number | null;
-      itemType: "shop" | "product";
-      draftType: "shop_bio" | "product_title" | "product_description";
-      content: string;
-    }> = [];
-
-    // Generate shop bio draft (kalau shop ada)
-    if (shop[0]) {
-      const shopData = shop[0];
-      const shopScore = scores.find((s) => s.itemType === "shop");
-
-      const prompt = `You are a Shopee store optimization expert. Generate an optimized shop bio/description for this Shopee store.
-
-Current shop info:
-- Name: ${shopData.shopName || "N/A"}
-- Current bio: ${shopData.shopBio || "(empty)"}
-- Stats: ${JSON.stringify(shopData.shopStats || {})}
-- Current bio score: ${shopScore?.bioScore || "N/A"}/100
-- Bio feedback: ${shopScore?.feedback?.bio || "N/A"}
-
-Generate 1 optimized shop bio (max 200 characters) that:
-- Clear & professional
-- Contains relevant keywords for Shopee search
-- Highlights shop's strengths
-- Appropriate tone for Indonesian marketplace
-
-Respond with ONLY the bio text (no JSON, no explanation).`;
-
-      const bioDraft = await callGeminiTextInternal(prompt);
-      if (bioDraft) {
-        drafts.push({
-          sessionId: id,
-          productId: null,
-          itemType: "shop",
-          draftType: "shop_bio",
-          content: bioDraft,
-        });
-      }
-    }
-
-    // Generate product title & description drafts
-    for (const product of products) {
-      const productScore = scores.find(
-        (s) => s.productId === product.id && s.itemType === "product",
-      );
-
-      // Title draft
-      if (product.title) {
-        const prompt = `You are a Shopee product optimization expert. Generate an optimized product title for this Shopee product.
-
-Current product info:
-- Title: ${product.title}
-- Price: ${product.price || "N/A"}
-- Categories: ${JSON.stringify(product.categories || [])}
-- Current title score: ${productScore?.titleScore || "N/A"}/100
-- Title feedback: ${productScore?.feedback?.title || "N/A"}
-
-Generate 1 optimized product title (max 120 characters) that:
-- Clear & descriptive
-- Contains relevant keywords for Shopee search
-- Professional tone
-- Appropriate length
-
-Respond with ONLY the title text (no JSON, no explanation).`;
-
-        const titleDraft = await callGeminiTextInternal(prompt);
-        if (titleDraft) {
-          drafts.push({
-            sessionId: id,
-            productId: product.id,
-            itemType: "product",
-            draftType: "product_title",
-            content: titleDraft,
-          });
-        }
-      }
-
-      // Description draft
-      if (product.description || product.title) {
-        const prompt = `You are a Shopee product optimization expert. Generate an optimized product description for this Shopee product.
-
-Current product info:
-- Title: ${product.title || "N/A"}
-- Description: ${product.description || "(empty)"}
-- Price: ${product.price || "N/A"}
-- Categories: ${JSON.stringify(product.categories || [])}
-- Variants: ${JSON.stringify(product.variants || {})}
-- Current description score: ${productScore?.descriptionScore || "N/A"}/100
-- Description feedback: ${productScore?.feedback?.description || "N/A"}
-
-Generate 1 optimized product description (max 1000 characters) that:
-- Clear & informative
-- Contains product specifications
-- Professional tone
-- Contains relevant keywords
-- Easy to read (use bullet points if appropriate)
-
-Respond with ONLY the description text (no JSON, no explanation).`;
-
-        const descDraft = await callGeminiTextInternal(prompt);
-        if (descDraft) {
-          drafts.push({
-            sessionId: id,
-            productId: product.id,
-            itemType: "product",
-            draftType: "product_description",
-            content: descDraft,
-          });
-        }
-      }
-    }
-
-    // Hapus drafts lama (kalau ada) sebelum insert baru
-    await db
-      .delete(shopeeDrafts)
-      .where(eq(shopeeDrafts.sessionId, id));
-
-    // Save drafts to DB
-    if (drafts.length > 0) {
-      await db.insert(shopeeDrafts).values(drafts);
-    }
+    const generated = await generateSessionDrafts(id);
 
     // Audit log
     await logAuditEvent({
@@ -638,17 +1098,125 @@ Respond with ONLY the description text (no JSON, no explanation).`;
       action: "CREATE",
       entityType: "shopee_drafts",
       entityId: id,
-      changes: { count: drafts.length },
+      changes: { count: generated },
       ipAddress: getClientIp(c),
       userAgent: getUserAgent(c),
     });
 
     return c.json({
       success: true,
-      data: { generated: drafts.length, drafts },
+      data: { generated },
     });
   },
 );
+
+// ─── POST /sessions/:id/reanalyze — re-run analysis + auto-regenerate suggestions ──
+
+router.post(
+  "/sessions/:id/reanalyze",
+  requireAuth,
+  requireManagement,
+  async (c) => {
+    const userId = getAuthUserId(c.get("jwtPayload") as any);
+    const id = Number(c.req.param("id"));
+    if (!id) return c.json({ success: false, message: "Invalid id" }, 400);
+
+    const [session] = await db
+      .select()
+      .from(shopeeScrapeSessions)
+      .where(eq(shopeeScrapeSessions.id, id));
+    if (!session) {
+      return c.json({ success: false, message: "Session not found" }, 404);
+    }
+    if (session.status !== "done") {
+      return c.json(
+        { success: false, message: "Session must be done before reanalyze" },
+        400,
+      );
+    }
+
+    try {
+      console.log(`[shopeeOptimization] session ${id}: reanalyze started (background)`);
+      // Set status to analyzing, reset startedAt, clear completedAt
+      await db
+        .update(shopeeScrapeSessions)
+        .set({
+          status: "analyzing",
+          startedAt: new Date(),
+          completedAt: null,
+          errorReason: null,
+          updatedAt: new Date(),
+        })
+        .where(eq(shopeeScrapeSessions.id, id));
+      setProgress(id, { phase: "analyzing", step: 0, total: 1, message: "Starting analysis..." });
+
+      // Audit log
+      await logAuditEvent({
+        userId,
+        action: "UPDATE",
+        entityType: "shopee_scrape_session",
+        entityId: id,
+        changes: { action: "reanalyze" },
+        ipAddress: getClientIp(c),
+        userAgent: getUserAgent(c),
+      });
+
+      // Run analysis + drafts in background (non-blocking)
+      runReanalyze(id).catch((err) => {
+        console.error(`[shopeeOptimization] session ${id}: background reanalyze failed:`, err);
+      });
+
+      // Return immediately — FE polls for progress
+      return c.json({
+        success: true,
+        data: { reanalyzed: true, message: "Reanalyze started in background" },
+      });
+    } catch (err) {
+      console.error(`[shopeeOptimization] session ${id}: reanalyze failed to start:`, err);
+      setProgress(id, { phase: "error", step: 0, total: 1, message: err instanceof Error ? err.message : "Reanalyze failed" });
+      // Restore status to done on error
+      await db
+        .update(shopeeScrapeSessions)
+        .set({ status: "done", updatedAt: new Date() })
+        .where(eq(shopeeScrapeSessions.id, id));
+      return c.json({ success: false, message: err instanceof Error ? err.message : "Reanalyze failed" }, 500);
+    }
+  },
+);
+
+// ─── Background: reanalyze (analysis + draft generation) ───────────────────
+
+async function runReanalyze(sessionId: number): Promise<void> {
+  console.log(`[shopeeOptimization] session ${sessionId}: background reanalyze running...`);
+  try {
+    // Phase 1: Re-run analysis (score + verdict + descriptions)
+    await analyzeSession(sessionId);
+    console.log(`[shopeeOptimization] session ${sessionId}: reanalyze done, regenerating suggestions...`);
+    setProgress(sessionId, { phase: "generating_drafts", step: 0, total: 1, message: "Regenerating suggestions..." });
+    // Phase 2: Auto-regenerate suggestions
+    const draftCount = await generateSessionDrafts(sessionId, (msg, step, total) => {
+      setProgress(sessionId, { phase: "generating_drafts", step: step ?? 0, total: total ?? 1, message: msg });
+    });
+    console.log(`[shopeeOptimization] session ${sessionId}: regenerated ${draftCount} suggestions`);
+    setProgress(sessionId, { phase: "done", step: 1, total: 1, message: `Completed · ${draftCount} suggestions` });
+    // Restore status to done
+    await db
+      .update(shopeeScrapeSessions)
+      .set({ status: "done", completedAt: new Date(), updatedAt: new Date() })
+      .where(eq(shopeeScrapeSessions.id, sessionId));
+  } catch (err) {
+    console.error(`[shopeeOptimization] session ${sessionId}: background reanalyze failed:`, err);
+    setProgress(sessionId, { phase: "error", step: 0, total: 1, message: err instanceof Error ? err.message : "Reanalyze failed" });
+    // Restore status to done on error
+    await db
+      .update(shopeeScrapeSessions)
+      .set({ status: "done", updatedAt: new Date() })
+      .where(eq(shopeeScrapeSessions.id, sessionId));
+  } finally {
+    // Clear progress after 30s (give FE time to fetch final state)
+    setTimeout(() => clearProgress(sessionId), 30_000);
+  }
+}
 
 // ─── PATCH /sessions/:id/drafts/:draftId — update draft status (approve/reject) ──
 
@@ -704,16 +1272,448 @@ router.patch(
   },
 );
 
+// ─── POST /sessions/:id/drafts/:draftId/regenerate — regenerate single draft ──
+
+router.post(
+  "/sessions/:id/drafts/:draftId/regenerate",
+  requireAuth,
+  requireManagement,
+  async (c) => {
+    const userId = getAuthUserId(c.get("jwtPayload") as any);
+    const sessionId = Number(c.req.param("id"));
+    const draftId = Number(c.req.param("draftId"));
+    if (!sessionId || !draftId) {
+      return c.json({ success: false, message: "Invalid id" }, 400);
+    }
+
+    // Cek session status
+    const [session] = await db
+      .select()
+      .from(shopeeScrapeSessions)
+      .where(eq(shopeeScrapeSessions.id, sessionId));
+    if (!session) {
+      return c.json({ success: false, message: "Session not found" }, 404);
+    }
+    if (session.status !== "done") {
+      return c.json(
+        { success: false, message: "Session must be done before regenerating drafts" },
+        400,
+      );
+    }
+
+    // Cek draft exists
+    const [existing] = await db
+      .select()
+      .from(shopeeDrafts)
+      .where(eq(shopeeDrafts.id, draftId));
+    if (!existing) {
+      return c.json({ success: false, message: "Draft not found" }, 404);
+    }
+
+    try {
+      const newContent = await regenerateDraftContent(sessionId, existing);
+      if (!newContent) {
+        return c.json({ success: false, message: "Failed to regenerate draft content" }, 500);
+      }
+
+      // Update draft content + reset status ke pending
+      await db
+        .update(shopeeDrafts)
+        .set({ content: newContent, status: "pending", updatedAt: new Date() })
+        .where(eq(shopeeDrafts.id, draftId));
+
+      const [updated] = await db
+        .select()
+        .from(shopeeDrafts)
+        .where(eq(shopeeDrafts.id, draftId));
+
+      await logAuditEvent({
+        userId,
+        action: "UPDATE",
+        entityType: "shopee_draft",
+        entityId: draftId,
+        changes: { regenerated: true },
+        ipAddress: getClientIp(c),
+        userAgent: getUserAgent(c),
+      });
+
+      console.log(`[drafts] draft ${draftId} regenerated (type=${existing.draftType})`);
+      return c.json({ success: true, data: updated });
+    } catch (err) {
+      console.error(`[drafts] regenerate draft ${draftId} failed:`, err);
+      return c.json({ success: false, message: err instanceof Error ? err.message : "Regenerate failed" }, 500);
+    }
+  },
+);
+
 // ─── Helper: call Gemini text (internal, via shared lib — no HTTP/auth needed) ──
 
-async function callGeminiTextInternal(prompt: string): Promise<string> {
+async function callGeminiTextInternal(prompt: string, label?: string): Promise<string> {
   try {
     const result = await geminiText(prompt);
-    return result.text.trim();
+    const text = result.text.trim();
+    if (!text) {
+      console.warn(`[drafts] Gemini returned empty text for ${label || "draft"} (finishReason may be SAFETY or empty)`);
+    }
+    return text;
   } catch (err) {
-    console.error("[shopeeOptimization] Gemini text call failed:", err);
+    console.error(`[drafts] Gemini text call failed for ${label || "draft"}:`, err);
     return "";
   }
+}
+
+// ─── Helper: regenerate content untuk single draft ─────────────────────────
+// Dipakai oleh endpoint POST /sessions/:id/drafts/:draftId/regenerate
+// Reuse prompt logic per draftType — ambil data fresh dari DB, build prompt, call Gemini.
+
+async function regenerateDraftContent(
+  sessionId: number,
+  draft: typeof shopeeDrafts.$inferSelect,
+): Promise<string> {
+  // Fetch fresh data
+  const [shop, products, scores] = await Promise.all([
+    db.select().from(shopeeShops).where(eq(shopeeShops.sessionId, sessionId)),
+    db.select().from(shopeeProducts).where(eq(shopeeProducts.sessionId, sessionId)),
+    db.select().from(shopeeScores).where(eq(shopeeScores.sessionId, sessionId)),
+  ]);
+
+  const shopData = shop[0];
+  const shopScore = scores.find((s) => s.itemType === "shop");
+  const fbDesc = (key: string) => (shopScore?.feedback as Record<string, string> | null)?.[key] || "N/A";
+  const dt = draft.draftType;
+
+  // ─── Shop bio ──────────────────────────────────────────────
+  if (dt === "shop_bio" && shopData) {
+    const prompt = `You are a Shopee store optimization expert. Generate an improved shop bio/description for this Shopee shop.
+
+Current shop info:
+- Name: ${shopData.shopName || "N/A"}
+- Bio: ${shopData.shopBio || "N/A"}
+- Stats: ${JSON.stringify(shopData.shopStats || {})}
+
+Bio feedback: ${fbDesc("bio")}
+
+Generate an optimized shop bio that:
+- Is clear, professional, and engaging
+- Contains relevant SEO keywords for Shopee search
+- Is appropriate length (not too short, not too long)
+- Reflects the shop's brand identity
+- In Indonesian language (since this is Shopee Indonesia)
+
+Respond with ONLY the bio text (no JSON, no explanation).`;
+    return await callGeminiTextInternal(prompt, "shop_bio");
+  }
+
+  // ─── Shop image prompts (banner, logo, hero, bottom_hero) ──
+  if ((dt === "banner_prompt" || dt === "logo_prompt" || dt === "hero_prompt" || dt === "bottom_hero_prompt") && shopData) {
+    const visualAesthetics = fbDesc("visualAesthetics");
+    const brandColorPalette = fbDesc("brandColorPalette");
+
+    if (dt === "banner_prompt") {
+      const bannerUrl = shopData.bannerLocal || shopData.bannerUrl || "N/A";
+      const prompt = `You are an expert Shopee store branding specialist and AI prompt engineer.
+
+Generate a detailed image generation prompt to OPTIMIZE this store's shop banner/cover image for the Shopee marketplace.
+
+Shop Info:
+- Name: ${shopData.shopName || "N/A"}
+- Bio: ${shopData.shopBio || "N/A"}
+- Current Shop Banner Image Description: ${fbDesc("bannerDescription")}
+- Current Shop Banner Image Feedback: ${fbDesc("banner")}
+- Shop Banner Image URL: ${bannerUrl}
+
+CRITICAL — SOURCE IMAGE REFERENCE & ADAPTIVE CONTEXT:
+The generated prompt MUST explicitly instruct the AI image generator to:
+- USE the attached image as the primary visual reference to preserve the exact content, branding, and visual identity.
+- Always refer to the reference photo as "the attached image" or "the attached source photo" (NEVER use technical filenames like image_0.png).
+- ADDRESS THE FEEDBACK: The generated prompt MUST explicitly address and fix the issues raised in the AI Feedback above.
+- OPTIMIZE VISUALS & BRANDING FOR SHOPEE BANNER:
+  - Upgrade the current layout into a high-converting, professional e-commerce shop banner optimized for a 1920x640 aspect ratio (3:1).
+  - Include the shop name "${shopData.shopName || ""}" and tagline as clean, legible text elements.
+  - Enhance background with modern, sophisticated aesthetic accents while maintaining the shop's brand identity.
+  - Elevate lighting to create bright, commercial-grade visuals.
+  - Ensure seamless composition with clear branding & messaging, matching a professional, modern e-commerce aesthetic.
+
+Output Requirement: Respond with ONLY the finalized prompt text in English (no intro, no markdown explanation, no JSON).`;
+      return await callGeminiTextInternal(prompt, "banner_prompt");
+    }
+
+    if (dt === "logo_prompt") {
+      const logoUrl = shopData.logoLocal || shopData.logoUrl || "N/A";
+      const prompt = `You are an expert Shopee store branding specialist and AI prompt engineer.
+
+Generate a detailed image generation prompt to OPTIMIZE this store's shop logo for the Shopee marketplace.
+
+Shop Info:
+- Name: ${shopData.shopName || "N/A"}
+- Bio: ${shopData.shopBio || "N/A"}
+- Current Shop Logo Image Description: ${fbDesc("logoDescription")}
+- Current Shop Logo Image Feedback: ${fbDesc("logo")}
+- Shop Logo Image URL: ${logoUrl}
+
+CRITICAL — SOURCE IMAGE REFERENCE & ADAPTIVE CONTEXT:
+The generated prompt MUST explicitly instruct the AI image generator to:
+- USE the attached image as the primary visual reference to preserve the exact logo design, typography, and brand identity.
+- Always refer to the reference photo as "the attached image" or "the attached source photo" (NEVER use technical filenames like image_0.png).
+- ADDRESS THE FEEDBACK: The generated prompt MUST explicitly address and fix the issues raised in the AI Feedback above.
+- OPTIMIZE VISUALS & BRANDING FOR SHOPEE LOGO:
+  - Upgrade the current logo into a clear, recognizable, professional shop logo optimized for a 500x500 (1:1).
+  - Ensure the logo is clearly readable and recognizable at small sizes (Shopee circular avatar format).
+  - Maintain the shop's brand identity (colors, typography style, tone).
+  - Enhance contrast, clarity, and visual impact for Shopee marketplace.
+  - Strong brand representation with professional appearance.
+
+Output Requirement: Respond with ONLY the finalized prompt text in English (no intro, no markdown explanation, no JSON).`;
+      return await callGeminiTextInternal(prompt, "logo_prompt");
+    }
+
+    if (dt === "hero_prompt") {
+      const heroImages = (shopData.heroImages as string[] | null) || [];
+      const heroDescriptions: string[] = (() => {
+        try { return JSON.parse(fbDesc("heroDescriptions")); } catch { return []; }
+      })();
+      const heroFeedbacks: string[] = (() => {
+        try { return JSON.parse(fbDesc("heroFeedbacks")); } catch { return []; }
+      })();
+      const idx = draft.imageIndex ?? 0;
+      const desc = heroDescriptions[idx] || "N/A";
+      const url = heroImages[idx] || "N/A";
+      const heroFb = heroFeedbacks[idx] || fbDesc("hero");
+      const prompt = `You are an expert Shopee store branding specialist and AI prompt engineer.
+
+Generate a detailed image generation prompt to OPTIMIZE this store's shop hero/banner image for the Shopee marketplace.
+
+Shop Info:
+- Name: ${shopData.shopName || "N/A"}
+- Bio: ${shopData.shopBio || "N/A"}
+- Current Shop Hero Image Description: ${desc}
+- Current Shop Hero Image Feedback: ${heroFb}
+- Shop Hero Image URL: ${url}
+
+CRITICAL — SOURCE IMAGE REFERENCE & ADAPTIVE CONTEXT:
+The generated prompt MUST explicitly instruct the AI image generator to:
+- USE the attached image as the primary visual reference to preserve the exact product design, material texture, structure, and refined craftsmanship.
+- Always refer to the reference photo as "the attached image" or "the attached source photo" (NEVER use technical filenames like image_0.png).
+- MATCH THE SHOT CONTEXT AUTOMATICALLY: If the attached image features a model, maintain a model lifestyle shot with the same pose/context. If the attached image is product-only, maintain a standalone product shot without a model.
+- ADDRESS THE FEEDBACK: The generated prompt MUST explicitly address and fix the issues raised in the AI Feedback above.
+- OPTIMIZE VISUALS & BRANDING FOR SHOPEE HERO BANNER:
+  - Upgrade the current layout into a high-converting, professional e-commerce hero banner optimized for a 1200x600 aspect ratio (2:1).
+  - Enhance dark/stark background elements with modern, sophisticated aesthetic accents (such as soft architectural shadows, elegant silk or marble textures, or refined neutral/warm lighting) while maintaining the shop's sleek, minimalist identity.
+  - Elevate lighting to create bright, commercial-grade highlights on the product materials, clarity, and luster.
+  - Ensure seamless composition with room for clean, legible shop branding elements ("${shopData.shopName || "N/A"}") if rendered, matching a luxurious, modern, and high-end Korean aesthetic.
+
+Output Requirement: Respond with ONLY the finalized prompt text in English (no intro, no markdown explanation, no JSON).`;
+      return await callGeminiTextInternal(prompt, `hero_prompt#${idx}`);
+    }
+
+    if (dt === "bottom_hero_prompt") {
+      const bottomHeroImages = (shopData.bottomHeroImages as string[] | null) || [];
+      const bottomHeroDescriptions: string[] = (() => {
+        try { return JSON.parse(fbDesc("bottomHeroDescriptions")); } catch { return []; }
+      })();
+      const bottomHeroFeedbacks: string[] = (() => {
+        try { return JSON.parse(fbDesc("bottomHeroFeedbacks")); } catch { return []; }
+      })();
+      const idx = draft.imageIndex ?? 0;
+      const desc = bottomHeroDescriptions[idx] || "N/A";
+      const url = bottomHeroImages[idx] || "N/A";
+      const bhFb = bottomHeroFeedbacks[idx] || fbDesc("bottomHero");
+      const prompt = `You are an expert Shopee store branding specialist and AI prompt engineer.
+
+Generate a detailed image generation prompt to OPTIMIZE this store's shop bottom hero/promo image for the Shopee marketplace.
+
+Shop Info:
+- Name: ${shopData.shopName || "N/A"}
+- Bio: ${shopData.shopBio || "N/A"}
+- Current Shop Bottom Hero Image Description: ${desc}
+- AI Feedback: ${bhFb}
+- Shop Bottom Hero Image URL: ${url}
+
+CRITICAL — SOURCE IMAGE REFERENCE & ADAPTIVE CONTEXT:
+The generated prompt MUST explicitly instruct the AI image generator to:
+- USE the attached image as the primary visual reference to preserve the exact product design, material texture, structure, and refined craftsmanship.
+- Always refer to the reference photo as "the attached image" or "the attached source photo" (NEVER use technical filenames like image_0.png).
+- MATCH THE SHOT CONTEXT AUTOMATICALLY: If the attached image features a model, maintain a model lifestyle shot with the same pose/context. If the attached image is product-only, maintain a standalone product shot without a model.
+- ADDRESS THE AI FEEDBACK: The generated prompt MUST explicitly address and fix the issues raised in the AI Feedback above.
+- OPTIMIZE VISUALS & BRANDING FOR SHOPEE BOTTOM HERO PROMO:
+  - Upgrade the current layout into a high-converting, professional e-commerce promo banner optimized for a 1200x400 aspect ratio (3:1).
+  - Enhance dark/stark background elements with modern, sophisticated aesthetic accents (such as soft architectural shadows, elegant silk or marble textures, or refined neutral/warm lighting) while maintaining the shop's sleek, minimalist identity.
+  - Elevate lighting to create bright, commercial-grade highlights on the product materials, clarity, and luster.
+  - Ensure seamless composition with room for clean, legible shop branding elements ("${shopData.shopName || "N/A"}") and promo messaging if rendered, matching a luxurious, modern, and high-end Korean aesthetic.
+
+Output Requirement: Respond with ONLY the finalized prompt text in English (no intro, no markdown explanation, no JSON).`;
+      return await callGeminiTextInternal(prompt, `bottom_hero_prompt#${idx}`);
+    }
+  }
+
+  // ─── Template design (frame) ───────────────────────────────
+  if (dt === "template_design" && shopData) {
+    const logoDescription = fbDesc("logoDescription") || fbDesc("logo");
+    const visualAesthetics = fbDesc("visualAesthetics");
+    const brandColorPalette = fbDesc("brandColorPalette");
+    const prompt = `You are a Shopee product frame and template design expert. Generate a detailed, highly specific image generation prompt (in English) for a PRODUCT FRAME TEMPLATE (Bingkai Foto Produk Shopee) that will be used as a full-bleed overlay/border for a shop catalog.
+
+Goal: Create a consistent, professional overlay template for all product photos in the shop, ensuring the referenced logo is centered inside a circular frame without obscuring the product area.
+
+Shop Context & Brand Identity:
+- Shop Name: "${shopData.shopName || "N/A"}"
+- Shop Bio: ${shopData.shopBio || "N/A"}
+- Logo description: ${logoDescription}
+- Logo url: ${shopData.logoLocal || shopData.logoUrl || "N/A"}
+- Visual Aesthetics: ${visualAesthetics}
+- Brand Color Palette: ${brandColorPalette}
+
+CRITICAL INSTRUCTIONS FOR THE PROMPT GENERATION:
+
+1. CIRCULAR LOGO FRAME & UNTOUCHED LOGO:
+- The template MUST feature a dedicated CIRCULAR (ROUND) EMBLEM/FRAME for the logo.
+- The reference logo MUST be placed EXACTLY IN THE CENTER of this circular frame.
+- The AI generator MUST treat the attached reference logo as an EXACT, UNTOUCHED REPLICA (no re-styling, no color changing, no filters, no shape alterations).
+- Placement & Non-Obscurity: Place this circular logo frame strictly in a corner (e.g. top-left or top-center edge) integrated directly into the border structure. It MUST NOT overlap, intrude upon, or obscure the main product area in the center.
+
+2. FULL-BLEED LAYOUT & EDGES:
+- The frame border MUST touch all four edges (top, bottom, left, right) of the 1000x1000 square canvas with zero outer margin or padding.
+- The outer perimeter must feature a sleek, razor-thin border frame using the brand color palette above.
+
+3. BRANDING & TEXT:
+- Include the exact shop name "${shopData.shopName || ""}" rendered in a clean, modern, high-end typeface that matches the shop's visual aesthetics (e.g. along the bottom border or opposite corner from the logo). This text is separate from the logo.
+
+4. CLEAR & PROTECTED PRODUCT AREA:
+- The central 70-75% area of the 1000x1000 canvas MUST remain completely clear, clean, and unobscured (soft light grey or studio white neutral mockup background) to ensure product photos fit perfectly without being covered by any frame elements or the logo.
+
+5. NO AI SLOP / ZERO CLUTTER:
+- STRICTLY NO promotional badges, NO discount ribbons, NO decorative flares, NO generic gradient glows, NO floral ornamentations.
+- Use only purposeful, razor-sharp geometric lines, subtle corner accents, and high-end layout framing that match the shop's visual aesthetics.
+
+6. BRAND IDENTITY ALIGNMENT:
+- The frame design MUST align with the shop's visual aesthetics: ${visualAesthetics}
+- The color palette MUST be restricted to the brand colors: ${brandColorPalette}
+- Every design element must serve the brand identity — no generic or random decorations.
+
+Generate ONLY the final English prompt text for an image generator (like Midjourney or DALL-E 3). Do not include introductory text, conversational filler, markdown code blocks, or explanations.`;
+    return await callGeminiTextInternal(prompt, "template_design");
+  }
+
+  // ─── Combine prompt ────────────────────────────────────────
+  if (dt === "combine_prompt" && shopData) {
+    const prompt = `You are an expert AI image prompt engineer for Shopee product catalog composition.
+
+Generate a detailed image generation prompt (in English) that COMBINES a product frame template with an optimized product photo into a final Shopee catalog image.
+
+Context:
+- Shop name: "${shopData.shopName || "N/A"}"
+- The user will attach 2 images:
+  1. Image 1 = the catalog frame template (generated from the template_design prompt)
+  2. Image 2 = the optimized product photo (generated from the product_photo_prompt)
+
+The prompt MUST instruct the AI image generator to:
+- Use Image 1 (frame template) as the FOREGROUND overlay
+- Use Image 2 (optimized product photo) as the BACKGROUND/base image
+- Place the product (Image 2) in the CENTER of the frame's clear area (Image 1)
+- Keep the frame border, logo emblem, and shop name text visible and unobstructed
+- Ensure the product is NOT obstructed by any frame element
+- Produce a seamless 1000x1000 final Shopee catalog image
+- Maintain the product's accurate appearance (color, shape, details)
+- Match lighting and composition between frame and product
+
+This is a GENERIC prompt — works for any product photo + frame combination from this shop. Respond with ONLY the prompt text (no JSON, no explanation).`;
+    return await callGeminiTextInternal(prompt, "combine_prompt");
+  }
+
+  // ─── Product drafts (title, description, photo prompt) ─────
+  if (dt === "product_title" || dt === "product_description" || dt === "product_photo_prompt") {
+    const product = products.find((p) => p.id === draft.productId);
+    if (!product) return "";
+    const productScore = scores.find((s) => s.productId === product.id && s.itemType === "product");
+    const fb = (productScore?.feedback as Record<string, string> | null) || {};
+    const fbPhoto = fb.photo || "N/A";
+    const photoDescription = fb.photoDescription || fbPhoto;
+
+    // Per-photo feedback/description arrays
+    const photoFeedbacks: string[] = (() => {
+      try { return JSON.parse(fb.photoFeedbacks || "[]"); } catch { return []; }
+    })();
+    const photoDescriptions: string[] = (() => {
+      try { return JSON.parse(fb.photoDescriptions || "[]"); } catch { return []; }
+    })();
+    const thumbImg = (product as any).thumbnailLocal || (product as any).thumbnailUrl || null;
+    const productImages = ((product as any).images as string[] | null) || [];
+    const uniquePhotos = [...new Set([thumbImg, ...productImages.slice(0, 5)].filter(Boolean))] as string[];
+    const imgIdx = draft.imageIndex ?? 0;
+    const perPhotoDesc = photoDescriptions[imgIdx] || photoDescription;
+    const perPhotoFb = photoFeedbacks[imgIdx] || fbPhoto;
+    const perPhotoUrl = uniquePhotos[imgIdx] || (product as any).thumbnailLocal || (product as any).thumbnailUrl || "N/A";
+
+    if (dt === "product_title") {
+      const prompt = `You are a Shopee product optimization expert. Generate an improved product title for this Shopee product.
+
+Current product info:
+- Title: ${product.title || "N/A"}
+- Description: ${(product.description || "").slice(0, 500)}
+- Categories: ${JSON.stringify(product.categories || [])}
+
+Title feedback: ${(productScore?.feedback as Record<string, string> | null)?.title || "N/A"}
+
+Generate an optimized product title that:
+- Is clear, descriptive, and professional
+- Contains relevant keywords for Shopee search
+- Is appropriate length (not too short, not too long)
+- In Indonesian language (since this is Shopee Indonesia)
+
+Respond with ONLY the title text (no JSON, no explanation).`;
+      return await callGeminiTextInternal(prompt, `product_title#${product.id}`);
+    }
+
+    if (dt === "product_description") {
+      const prompt = `You are a Shopee product optimization expert. Generate an improved product description for this Shopee product.
+
+Current product info:
+- Title: ${product.title || "N/A"}
+- Description: ${(product.description || "").slice(0, 1000)}
+- Categories: ${JSON.stringify(product.categories || [])}
+
+Description feedback: ${(productScore?.feedback as Record<string, string> | null)?.description || "N/A"}
+
+Generate an optimized product description that:
+- Is clear, professional, and engaging
+- Highlights key features and benefits
+- Contains relevant keywords for SEO
+- Is appropriate length
+- In Indonesian language (since this is Shopee Indonesia)
+
+Respond with ONLY the description text (no JSON, no explanation).`;
+      return await callGeminiTextInternal(prompt, `product_description#${product.id}`);
+    }
+
+    if (dt === "product_photo_prompt") {
+      const prompt = `You are an expert Shopee product photographer and AI prompt engineer.
+
+Generate a detailed image generation prompt to OPTIMIZE this product's photo (photo ${imgIdx + 1} of ${uniquePhotos.length}) for the Shopee marketplace.
+
+Product Info:
+- Title: ${product.title || "N/A"}
+- Description: ${(product.description || "").slice(0, 500)}
+- Categories: ${JSON.stringify(product.categories || [])}
+- Photo Description: ${perPhotoDesc}
+- Photo Feedback: ${perPhotoFb}
+- Photo URL: ${perPhotoUrl}
+
+CRITICAL — SOURCE IMAGE REFERENCE & ADAPTIVE CONTEXT:
+The generated prompt MUST explicitly instruct the AI image generator to:
+- USE the attached image as the primary visual reference to replicate the EXACT product design, shape, color, and details accurately.
+- MATCH THE SHOT TYPE AUTOMATICALLY: If the attached image is a lifestyle shot (featuring a model/hand wearing the product/ear wearing the product/any human body part wearing the product), maintain a model shot with the same pose/context. If the attached image is a product-only shot, keep it strictly as a standalone product shot without a model.
+- Always refer to the reference photo as "the attached image" or "the attached product photo" (NEVER use technical filenames like image_0.png).
+- OPTIMIZE VISUALS FOR SHOPEE: high-end commercial studio settings (Korean aesthetic with clean soft-neutral tones), enhance metallic reflections and luster, refine soft studio lighting, and ensure pin-sharp macro focus on the product.
+- SPECIFY output details: 1000x1000 pixels (1:1 aspect ratio), 8k resolution, photorealistic commercial product photography.
+
+Output Requirement: Respond with ONLY the finalized prompt text in English (no intro, no markdown explanation, no JSON).`;
+      return await callGeminiTextInternal(prompt, `product_photo_prompt#${product.id}#${imgIdx}`);
+    }
+  }
+
+  // Unknown draft type or missing data
+  console.warn(`[drafts] regenerate: unknown draft type "${dt}" or missing data`);
+  return "";
 }
 
 // ─── PBI-4.5: POST /sessions/:id/generate-template-prompt ──────────────────
@@ -797,6 +1797,7 @@ Respond with ONLY the prompt text (no JSON, no explanation).`;
     await db.insert(shopeeDrafts).values({
       sessionId: id,
       productId: null,
+      imageIndex: null,
       itemType: "shop",
       draftType: "template_prompt",
       content: templatePrompt,
@@ -884,6 +1885,7 @@ Respond with ONLY the prompt text.`;
     await db.insert(shopeeDrafts).values({
       sessionId: id,
       productId: null,
+      imageIndex: null,
       itemType: "shop",
       draftType: "template_prompt",
       content: templatePrompt,
@@ -970,6 +1972,7 @@ router.post(
       await db.insert(shopeeDrafts).values({
         sessionId: id,
         productId: null,
+        imageIndex: null,
         itemType: "shop",
         draftType: "template_prompt",
         content: null,
@@ -1067,6 +2070,7 @@ Respond with ONLY the prompt text.`;
         drafts.push({
           sessionId: id,
           productId: product.id,
+          imageIndex: null,
           itemType: "product",
           draftType: "composite_prompt",
           content: compositePrompt,
@@ -1223,5 +2227,35 @@ router.get(
     });
   },
 );
+
+// ─── POST /sessions/:id/verify-resume — user sudah verify anti-bot, lanjutkan scrape ──
+
+router.post("/sessions/:id/verify-resume", requireAuth, requireManagement, async (c) => {
+  const sessionId = Number(c.req.param("id"));
+  if (!sessionId) return c.json({ success: false, message: "Invalid id" }, 400);
+
+  // 1. Resolve pending verify promise (onVerifyWait callback)
+  const resolveVerify = pendingVerifyResolvers.get(sessionId);
+  if (resolveVerify) {
+    pendingVerifyResolvers.delete(sessionId);
+    resolveVerify();
+  }
+
+  // 2. Send "resume" to worker stdin via scraperBridge
+  const resumed = resumeWorker(sessionId);
+  if (!resumed) {
+    return c.json({ success: false, message: "No active worker for this session" }, 404);
+  }
+
+  // 3. Reset session status to scraping
+  await db.update(shopeeScrapeSessions).set({
+    status: "scraping",
+    errorReason: null,
+    updatedAt: new Date(),
+  }).where(eq(shopeeScrapeSessions.id, sessionId));
+
+  console.log(`[shopeeOptimization] session ${sessionId}: verify-resume, worker resumed`);
+  return c.json({ success: true, message: "Worker resumed after verify" });
+});
 
 export default router;

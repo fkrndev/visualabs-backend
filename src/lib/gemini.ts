@@ -13,9 +13,21 @@ config();
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.5-flash-lite";
+
+// Chunked base64 encoding — avoids "Maximum call stack size exceeded" on large images
+function arrayBufferToBase64(buf: ArrayBuffer): string {
+  const bytes = new Uint8Array(buf);
+  const chunkSize = 0x8000; // 32KB chunks
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, Math.min(i + chunkSize, bytes.length));
+    binary += String.fromCharCode.apply(null, Array.from(chunk) as unknown as number[]);
+  }
+  return btoa(binary);
+}
 const GEMINI_UPSTREAM = "https://generativelanguage.googleapis.com/v1beta";
 const GEMINI_WINDOW_MS = 60_000; // 1 minute
-const GEMINI_MAX_RPM = 15;
+const GEMINI_MAX_RPM = parseInt(process.env.GEMINI_MAX_RPM || "15", 10);
 
 // Sliding window rate limiter
 const geminiCallTimes: number[] = [];
@@ -191,9 +203,7 @@ export async function geminiVision(
                 mimeType = res.headers.get("content-type") || "image/jpeg";
             }
 
-            const base64 = btoa(
-                String.fromCharCode(...new Uint8Array(buf)),
-            );
+            const base64 = arrayBufferToBase64(buf);
             imageParts.push({
                 inlineData: { mimeType, data: base64 },
             });

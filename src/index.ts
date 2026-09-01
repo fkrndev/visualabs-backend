@@ -302,4 +302,5 @@ export default {
   port,
   fetch: app.fetch,
   websocket,
+  idleTimeout: 0, // disable idle timeout for long-running requests (reanalyze, scraping)
 };

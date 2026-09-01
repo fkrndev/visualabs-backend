@@ -28,9 +28,24 @@ async function connect() {
   return { browser, context, page };
 }
 
-function disconnect(browser: any) {
-  try { browser.close(); } catch {}
-  try { browser.disconnect(); } catch {}
+async function disconnect(browser: any) {
+  await Promise.race([
+    (async () => {
+      // Close semua pages/tabs dulu
+      try {
+        const contexts = browser.contexts();
+        for (const ctx of contexts) {
+          const pages = ctx.pages();
+          for (const p of pages) {
+            try { await p.close(); } catch {}
+          }
+        }
+      } catch {}
+      try { await browser.close(); } catch {}
+      try { await browser.disconnect(); } catch {}
+    })(),
+    new Promise((r) => setTimeout(r, 15_000)),
+  ]);
 }
 
 async function main() {
@@ -42,7 +57,7 @@ async function main() {
       const loggedIn = !url.includes("login") && await page.locator('input[name="loginKey"]').count() === 0;
       console.log(JSON.stringify({ logged_in: loggedIn, url }));
     } finally {
-      disconnect(browser);
+      await disconnect(browser);
     }
   } else if (command === "scrapeShop") {
     const { browser, page } = await connect();
@@ -75,7 +90,7 @@ async function main() {
         sellerUrl: "https://seller.shopee.co.id/",
       }));
     } finally {
-      disconnect(browser);
+      await disconnect(browser);
     }
   } else if (command === "scrapeProducts") {
     const productUrls = JSON.parse(args[0] || "[]") as string[];
@@ -102,7 +117,7 @@ async function main() {
       }
       console.log(JSON.stringify(products));
     } finally {
-      disconnect(browser);
+      await disconnect(browser);
     }
   } else {
     console.error(`Unknown command: ${command}`);
@@ -110,7 +125,9 @@ async function main() {
   }
 }
 
-main().catch((err) => {
+main().then(() => {
+  process.exit(0);
+}).catch((err) => {
   console.error("SCRAPER_WORKER_ERROR:", err.message);
   process.exit(1);
 });
