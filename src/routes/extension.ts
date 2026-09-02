@@ -5,6 +5,9 @@ import { readFile, writeFile } from "fs/promises";
 import { join } from "path";
 import { requireAuthWithFallback, extractAuthInfo } from "../middleware/auth";
 import { isManagementLevel } from "../utils/auth/permissions";
+import { desc } from "drizzle-orm";
+import { db } from "../db/client";
+import { chromeProfiles } from "../db/schema";
 
 /**
  * Distribusi build extension `vbox-controller` ke VBOX.
@@ -207,6 +210,50 @@ router.post("/upload", requireAuthWithFallback, async (c) => {
 	pruneOldZips(filename);
 
 	return c.json({ success: true, data: manifest });
+});
+/**
+ * GET /rollout — sebaran versi extension yang BENAR-BENAR berjalan di tim.
+ *
+ * Sumbernya `chrome_profiles.ext_version`, yang dilaporkan sendiri oleh extension
+ * lewat /chrome-histories/track dan /capture. Karena itu daftar ini membuktikan
+ * versi tersebut sedang berjalan — bukan sekadar terunduh.
+ *
+ * Profil yang belum pernah melapor muncul sebagai versi `null`. Itu bisa berarti
+ * dua hal yang berbeda dan keduanya penting: extension-nya masih lama (versi
+ * lama belum mengirim field ini), atau profilnya memang tidak pernah dibuka.
+ * Kolom `extSeenAt` yang membedakan keduanya.
+ */
+router.get("/rollout", requireAuthWithFallback, async (c) => {
+	const info = await extractAuthInfo(c.req.header("Authorization"));
+	if (!isManagementLevel(info.role)) {
+		return c.json({ success: false, message: "Butuh akses management" }, 403);
+	}
+
+	const manifest = await readManifest();
+	const rows = await db
+		.select({
+			id: chromeProfiles.id,
+			name: chromeProfiles.name,
+			uuid: chromeProfiles.uuid,
+			userId: chromeProfiles.userId,
+			extVersion: chromeProfiles.extVersion,
+			extSeenAt: chromeProfiles.extSeenAt,
+		})
+		.from(chromeProfiles)
+		.orderBy(desc(chromeProfiles.extSeenAt));
+
+	const terbaru = manifest?.version ?? null;
+	const ringkasan: Record<string, number> = {};
+	for (const r of rows) ringkasan[r.extVersion ?? "belum melapor"] = (ringkasan[r.extVersion ?? "belum melapor"] ?? 0) + 1;
+
+	return c.json({
+		success: true,
+		versiTerbaru: terbaru,
+		ringkasan,
+		sudahTerbaru: terbaru ? rows.filter((r) => r.extVersion === terbaru).length : 0,
+		belumTerbaru: terbaru ? rows.filter((r) => r.extVersion !== terbaru).length : rows.length,
+		profiles: rows,
+	});
 });
 
 export default router;

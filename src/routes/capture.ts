@@ -8,6 +8,7 @@ import { db } from '../db/client';
 import { captureEndpoints, capturePayloads, chromeProfiles } from '../db/schema';
 import { requireAuth, requireManagement, JWT_SECRET } from '../middleware/auth';
 import { PLATFORM_BY_HOST, parseCaptureUrl, sha256, shouldStoreBody } from '../utils/capture';
+import { recordExtVersion } from '../utils/extVersion';
 
 /**
  * Menyimpan data marketplace yang dilihat tim. Rencana: docs/vbox/capture-plan.md
@@ -40,6 +41,7 @@ const captureItem = z.object({
 const capturePayload = z.object({
 	browserUuid: z.string().min(1),
 	items: z.array(captureItem).min(1).max(200),
+	extVersion: z.string().max(20).optional(),
 });
 
 /** Sama seperti /chrome-histories/track: extension memakai JWT dari injected-config. */
@@ -59,7 +61,7 @@ router.post('/', zValidator('json', capturePayload), async (c) => {
 		return c.json({ success: false, message: 'Unauthorized' }, 401);
 	}
 
-	const { browserUuid, items } = c.req.valid('json');
+	const { browserUuid, items, extVersion } = c.req.valid('json');
 
 	// Identitas akun ikut profil Chrome, bukan isi response. Satu profil dipakai
 	// untuk satu klien, dan uuid-nya selalu ada — sementara 90% response Shopee
@@ -71,6 +73,8 @@ router.post('/', zValidator('json', capturePayload), async (c) => {
 		.limit(1);
 
 	if (!profile) return c.json({ success: false, message: 'Browser belum terdaftar' }, 404);
+
+	await recordExtVersion(profile.id, extVersion);
 
 	// Saklar penyimpanan dibaca dari server, bukan dipercayakan ke extension:
 	// daftar aturan di extension bisa basi beberapa menit setelah kita mematikan

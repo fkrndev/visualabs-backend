@@ -220,11 +220,19 @@ export const chromeProfiles = mysqlTable(
         lockDeviceId: varchar('lock_device_id', { length: 255 }),
         lockedAt: timestamp('locked_at'),
         lockExpiresAt: timestamp('lock_expires_at'),
+        // --- Versi extension yang BENAR-BENAR berjalan di profil ini ---
+        // Dilaporkan sendiri oleh vbox-controller lewat panggilan yang sudah ada
+        // (/chrome-histories/track dan /capture). Sengaja bukan dicatat saat
+        // mengunduh: terunduh belum tentu terpasang, sedangkan laporan ini hanya
+        // bisa datang dari extension yang sedang jalan.
+        extVersion: varchar('ext_version', { length: 20 }),
+        extSeenAt: timestamp('ext_seen_at'),
         createdAt: timestamp('created_at').defaultNow().notNull(),
         updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
     },
     (table) => [
         uniqueIndex('chrome_profiles_uuid_unique').on(table.uuid),
+        index('chrome_profiles_ext_version_idx').on(table.extVersion),
         index('chrome_profiles_user_idx').on(table.userId),
         index('chrome_profiles_customer_idx').on(table.customerId),
         index('chrome_profiles_locked_by_idx').on(table.lockedBy),

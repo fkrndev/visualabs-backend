@@ -14,6 +14,7 @@ import {
   type ColumnMap,
 } from '../utils/queryFilters';
 import { requireAuth, requireManagement, JWT_SECRET } from '../middleware/auth';
+import { recordExtVersion } from '../utils/extVersion';
 
 const router = new Hono();
 
@@ -44,11 +45,13 @@ const trackPayload = z.object({
   url: z.string().url().min(1),
   title: z.string().optional(),
   durationMs: z.coerce.number().int().min(0).optional(),
+  // Versi extension yang mengirim. Dipakai memantau sebaran auto-update.
+  extVersion: z.string().max(20).optional(),
 });
 
 // POST /track — dipanggil extension setiap URL berubah
 router.post('/track', zValidator('json', trackPayload), async (c) => {
-  const { browserUuid, url, title, durationMs } = c.req.valid('json');
+  const { browserUuid, url, title, durationMs, extVersion } = c.req.valid('json');
 
   // Validate token dari extension (Authorization: Bearer header)
   const authHeader = c.req.header('Authorization');
@@ -77,6 +80,8 @@ router.post('/track', zValidator('json', trackPayload), async (c) => {
   if (!profile) {
     return c.json({ success: false, message: 'Browser belum terdaftar' }, 404);
   }
+
+  await recordExtVersion(profile.id, extVersion);
 
   // Cek apakah URL sudah ada untuk profile ini
   const existingRows = await db
