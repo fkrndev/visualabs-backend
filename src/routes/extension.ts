@@ -5,9 +5,9 @@ import { readFile, writeFile } from "fs/promises";
 import { join } from "path";
 import { requireAuthWithFallback, extractAuthInfo } from "../middleware/auth";
 import { isManagementLevel } from "../utils/auth/permissions";
-import { desc } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { db } from "../db/client";
-import { chromeProfiles } from "../db/schema";
+import { chromeProfiles, profiles, users } from "../db/schema";
 
 /**
  * Distribusi build extension `vbox-controller` ke VBOX.
@@ -230,16 +230,23 @@ router.get("/rollout", requireAuthWithFallback, async (c) => {
 	}
 
 	const manifest = await readManifest();
+	// Nama staff ikut diambil supaya daftar ini langsung bisa ditindaklanjuti —
+	// tahu profil mana saja tidak cukup, yang diminta memperbarui adalah orangnya.
 	const rows = await db
 		.select({
 			id: chromeProfiles.id,
 			name: chromeProfiles.name,
 			uuid: chromeProfiles.uuid,
 			userId: chromeProfiles.userId,
+			staffName: profiles.name,
+			staffUsername: users.username,
+			staffEmail: users.email,
 			extVersion: chromeProfiles.extVersion,
 			extSeenAt: chromeProfiles.extSeenAt,
 		})
 		.from(chromeProfiles)
+		.leftJoin(users, eq(users.id, chromeProfiles.userId))
+		.leftJoin(profiles, eq(profiles.userId, chromeProfiles.userId))
 		.orderBy(desc(chromeProfiles.extSeenAt));
 
 	const terbaru = manifest?.version ?? null;
