@@ -7,8 +7,25 @@ concurrency:
   group: deploy-${{ github.repository }}
   cancel-in-progress: false
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run lint
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run test:run
+
   deploy:
     runs-on: ubuntu-latest
+    needs: [lint, test]
     steps:
       - name: Deploy via SSH
         env:
